@@ -1,0 +1,18 @@
+https://rr2---sn-q5q5uf-un5l.googlevideo.com/videoplayback?expire=1681734584&ei=WOc8ZIO1JODL2roPx--buAI&ip=118.150.55.88&id=o-AGMbaZPt18X9n-feStyaqc6U4YExzdHkfHaXrakrkmo4&itag=248&source=youtube&requiressl=yes&mh=q8&mm=31%2C29&mn=sn-q5q5uf-un5l%2Csn-un57snee&ms=au%2Crdu&mv=m&mvi=2&pcm2cms=yes&pl=21&initcwndbps=1341250&spc=99c5CWA6t4SiCd6kxEGNfnKSo5jm3o0&vprv=1&svpuc=1&mime=video%2Fwebm&gir=yes&clen=715740&dur=2.936&lmt=1610636905823834&mt=1681712704&fvip=2&keepalive=yes&fexp=24007246&c=ANDROID&txp=6316222&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Cgir%2Cclen%2Cdur%2Clmt&sig=AOq0QJ8wRQIhAOLdleEn8zKKS49l6SHVoAOiiBjy0TzrJX6EIXE-08ddAiBnSmujNGD1Ad2Qo1nMcfgrFbUXkAobr-R_SrrFKSygxQ%3D%3D&lsparams=mh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpcm2cms%2Cpl%2Cinitcwndbps&lsig=AG3C_xAwRAIgd_TxoxGwmBb60ybkQW1UG9wEEON8kB_hJAFxeb77TNcCIHqIX1hbbLc7swv2YmmTJF-QD7e5U856S0JHMnu3Bq3b&range=0-715740	
+ gid=3dc1d3c5d626c5ff
+ dir=D:\Download\yt-dlp\座長製薬所\
+ out=.\NA_20210114_【Vtuber廢片】AAAAAAAAAAAAAAAAAAA【桃鈴ねね⧸MomosuzuNene】.f248.webm-Frag0
+ split=16
+ file-allocation=none
+ allow-overwrite=true
+ continue=true
+ auto-file-renaming=false
+ allow-piece-length-change=true
+ uri-selector=inorder
+ remote-time=true
+ max-connection-per-server=16
+ header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Safari/537.36
+ header=Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+ header=Accept-Language: en-us,en;q=0.5
+ header=Sec-Fetch-Mode: navigate
+ http-accept-gzip=true
