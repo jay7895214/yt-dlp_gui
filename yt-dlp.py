@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import subprocess
 import threading
+import re
 
 def download_video():
     url = url_entry.get("1.0", "end-1c")  # 獲取Text控件中的文字內容
@@ -35,20 +36,25 @@ def download_video():
 
     cmd.append(url)
 
+    log_file = open("download_log.txt", "w")
+
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, text=True)
         status_label.config(text="正在下載...")
         progress_bar['value'] = 0
-        total_size = 0
-        downloaded_size = 0
 
         for line in iter(process.stdout.readline, ""):
+            log_file.write(line)
+            log_file.flush()
+            print(line, end="")  # 將每行輸出打印到控制台
             if "Total file size" in line:
-                total_size = float(line.split()[-2])
+                total_size = float(re.search(r"([0-9.]+)", line).group(1))
             if "%" in line:
-                percentage = float(line.split()[1].replace('%', ''))
-                progress_bar['value'] = percentage
-                status_label.config(text=f"正在下載... {percentage:.2f}%")
+                match = re.search(r"([0-9.]+)%", line)
+                if match:
+                    percentage = float(match.group(1))
+                    progress_bar['value'] = percentage
+                    status_label.config(text=f"正在下載... {percentage:.2f}%")
         
         retcode = process.wait()
         if retcode:
@@ -57,6 +63,8 @@ def download_video():
             status_label.config(text="成功: 影片下載完成！")
     except subprocess.CalledProcessError:
         status_label.config(text="錯誤: 下載時發生錯誤。請檢查URL和其他參數。")
+    finally:
+        log_file.close()
 
     progress_bar['value'] = 0
 
