@@ -23,12 +23,20 @@ class YouTubeDownloader:
         self.url_entry.pack(pady=5, padx=10)
         
         # Section 輸入區域
-        section_label = tk.Label(self.root, text="下載區段 (選填，格式: *開始秒數-結束秒數):", font=("Arial", 10))
-        section_label.pack(pady=(10, 5))
+        section_frame = tk.Frame(self.root)
+        section_frame.pack(pady=10)
         
-        self.section_entry = tk.Entry(self.root, width=40)
-        self.section_entry.pack(pady=5)
-        self.section_entry.bind('<Return>', lambda e: self.start_download())
+        section_label = tk.Label(section_frame, text="下載區段 (選填):", font=("Arial", 10))
+        section_label.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(section_frame, text="開始秒數:").pack(side=tk.LEFT, padx=(10, 5))
+        self.start_sec_entry = tk.Entry(section_frame, width=10)
+        self.start_sec_entry.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(section_frame, text="結束秒數:").pack(side=tk.LEFT, padx=(10, 5))
+        self.end_sec_entry = tk.Entry(section_frame, width=10)
+        self.end_sec_entry.pack(side=tk.LEFT, padx=5)
+        self.end_sec_entry.bind('<Return>', lambda e: self.start_download())
         
         # 下載路徑選擇
         path_frame = tk.Frame(self.root)
@@ -93,7 +101,8 @@ class YouTubeDownloader:
         self.download_btn.config(state=tk.DISABLED, bg="#cccccc")
         
         url = self.url_entry.get("1.0", "end-1c").strip()
-        section = self.section_entry.get().strip()
+        start_sec = self.start_sec_entry.get().strip()
+        end_sec = self.end_sec_entry.get().strip()
         download_path = self.path_entry.get().strip()
         
         # 驗證輸入
@@ -101,6 +110,29 @@ class YouTubeDownloader:
             messagebox.showerror("錯誤", "請輸入 YouTube URL")
             self.reset_download_state()
             return
+        
+        # 驗證秒數輸入
+        section = None
+        if start_sec or end_sec:
+            try:
+                if start_sec and not start_sec.isdigit():
+                    raise ValueError("開始秒數必須是數字")
+                if end_sec and not end_sec.isdigit():
+                    raise ValueError("結束秒數必須是數字")
+                if start_sec and end_sec and int(start_sec) >= int(end_sec):
+                    raise ValueError("開始秒數必須小於結束秒數")
+                
+                # 構建 section 格式: *start-end
+                if start_sec and end_sec:
+                    section = f"*{start_sec}-{end_sec}"
+                elif start_sec:
+                    section = f"*{start_sec}-inf"
+                elif end_sec:
+                    section = f"*0-{end_sec}"
+            except ValueError as e:
+                messagebox.showerror("錯誤", str(e))
+                self.reset_download_state()
+                return
         
         # 確保下載路徑存在
         try:
