@@ -143,13 +143,17 @@ class YouTubeDownloader:
         self.update_status("正在下載...", "orange")
         
         try:
+            # 在 Windows 上使用系統預設編碼，通常是 CP950 或 Big5
+            import sys
+            system_encoding = sys.getdefaultencoding() if sys.platform != 'win32' else 'cp950'
+            
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 text=True,
-                encoding='utf-8',
+                encoding=system_encoding,
                 errors='replace'
             )
             
