@@ -1,5 +1,5 @@
-
-yt-dlp.exe
-
+ffprobe.exe
+ffplay.exe
+ffmpeg.exe
 download_log.txt
 yt-dlp.exe
