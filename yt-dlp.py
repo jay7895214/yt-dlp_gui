@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 import subprocess
 import threading
 import os
@@ -7,436 +7,404 @@ import sys
 import urllib.request
 import zipfile
 import shutil
+import json
+import datetime
 from pathlib import Path
 from io import BytesIO
 
 class YouTubeDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("YouTube Downloader (含版本偵測)")
-        self.root.geometry("700x700") # 稍微再加高以容納版本資訊
+        self.root.title("Universal Downloader (YouTube/Podcast)")
+        self.root.geometry("750x750")
         
-        self.is_downloading = False
-        self.is_updating = False
+        self.is_task_running = False # 統稱任務狀態 (下載或更新或解析中)
+        self.stop_flag = False       # 用於停止批次下載
         
+        # 設定 bin 資料夾路徑
+        self.bin_folder = os.path.join(os.getcwd(), "bin")
+        if not os.path.exists(self.bin_folder):
+            os.makedirs(self.bin_folder)
+            
         self.setup_menu()
         self.setup_ui()
-        
-        # 程式啟動時自動檢查版本
         self.refresh_versions()
         
     def setup_menu(self):
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        
         tools_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="工具", menu=tools_menu)
-        tools_menu.add_command(label="檢查並更新 yt-dlp 與 ffmpeg", command=self.start_update_tools)
+        tools_menu.add_command(label="檢查並更新組件", command=self.start_update_tools)
         
     def setup_ui(self):
-        # --- 主要輸入區 ---
-        url_label = tk.Label(self.root, text="YouTube URL:", font=("Arial", 10))
-        url_label.pack(pady=(10, 5))
+        # URL 區塊
+        url_frame = tk.Frame(self.root)
+        url_frame.pack(pady=(10, 5), padx=10, fill=tk.X)
         
-        self.url_entry = tk.Text(self.root, width=80, height=3, wrap=tk.WORD)
-        self.url_entry.pack(pady=5, padx=10)
+        tk.Label(url_frame, text="URL (影片/RSS/播放清單):", font=("Arial", 10)).pack(anchor="w")
+        self.url_entry = tk.Text(url_frame, height=3, wrap=tk.WORD)
+        self.url_entry.pack(fill=tk.X, pady=5)
         
-        # --- Section 區段 ---
-        section_frame = tk.Frame(self.root)
-        section_frame.pack(pady=10)
+        # 按鈕區塊 (分析 vs 直接下載)
+        btn_frame = tk.Frame(self.root)
+        btn_frame.pack(pady=5)
         
-        tk.Label(section_frame, text="下載區段 (選填):", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        self.analyze_btn = tk.Button(btn_frame, text="🔍 解析列表/Podcast", command=self.start_analyze, bg="#2196F3", fg="white", font=("Arial", 10, "bold"), padx=10)
+        self.analyze_btn.pack(side=tk.LEFT, padx=10)
         
-        tk.Label(section_frame, text="開始秒數:").pack(side=tk.LEFT, padx=(10, 5))
-        self.start_sec_entry = tk.Entry(section_frame, width=10)
+        self.download_btn = tk.Button(btn_frame, text="⬇️ 直接下載", command=self.start_direct_download, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), padx=10)
+        self.download_btn.pack(side=tk.LEFT, padx=10)
+
+        # 下載參數區
+        options_frame = tk.LabelFrame(self.root, text="下載選項", padx=10, pady=5)
+        options_frame.pack(pady=10, padx=10, fill=tk.X)
+        
+        # 時間區段
+        time_frame = tk.Frame(options_frame)
+        time_frame.pack(fill=tk.X, pady=5)
+        tk.Label(time_frame, text="時間裁切 (秒):").pack(side=tk.LEFT)
+        self.start_sec_entry = tk.Entry(time_frame, width=8)
         self.start_sec_entry.pack(side=tk.LEFT, padx=5)
-        
-        tk.Label(section_frame, text="結束秒數:").pack(side=tk.LEFT, padx=(10, 5))
-        self.end_sec_entry = tk.Entry(section_frame, width=10)
+        tk.Label(time_frame, text="-").pack(side=tk.LEFT)
+        self.end_sec_entry = tk.Entry(time_frame, width=8)
         self.end_sec_entry.pack(side=tk.LEFT, padx=5)
-        self.end_sec_entry.bind('<Return>', lambda e: self.start_download())
         
-        # --- 路徑選擇 ---
-        path_frame = tk.Frame(self.root)
-        path_frame.pack(pady=10, padx=10, fill=tk.X)
-        
-        tk.Label(path_frame, text="下載路徑:", font=("Arial", 10)).pack(side=tk.LEFT)
-        
-        self.path_entry = tk.Entry(path_frame, width=50)
-        self.path_entry.pack(side=tk.LEFT, padx=5)
-        default_path = str(Path.home() / "Downloads" / "yt-dlp")
-        self.path_entry.insert(0, default_path)
-        
+        # 路徑選擇
+        path_frame = tk.Frame(options_frame)
+        path_frame.pack(fill=tk.X, pady=5)
+        tk.Label(path_frame, text="儲存位置:").pack(side=tk.LEFT)
+        self.path_entry = tk.Entry(path_frame)
+        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.path_entry.insert(0, str(Path.home() / "Downloads" / "Podcast_DL"))
         tk.Button(path_frame, text="瀏覽", command=self.browse_folder).pack(side=tk.LEFT)
-        
-        # --- 下載按鈕 ---
-        self.download_btn = tk.Button(
-            self.root, 
-            text="開始下載", 
-            command=self.start_download,
-            font=("Arial", 12),
-            bg="#4CAF50",
-            fg="white",
-            padx=20,
-            pady=5
-        )
-        self.download_btn.pack(pady=15)
-        
-        # --- 狀態顯示 ---
-        self.status_label = tk.Label(self.root, text="就緒", font=("Arial", 10), fg="blue")
+
+        # 狀態與日誌
+        self.status_label = tk.Label(self.root, text="就緒", fg="blue", font=("Arial", 10))
         self.status_label.pack(pady=5)
         
-        # --- 日誌區 ---
-        log_label = tk.Label(self.root, text="操作日誌:", font=("Arial", 10))
-        log_label.pack(pady=(10, 5))
-        
-        self.log_text = scrolledtext.ScrolledText(self.root, width=80, height=12, wrap=tk.WORD)
+        self.log_text = scrolledtext.ScrolledText(self.root, height=15, state='disabled')
         self.log_text.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        
+        # 版本資訊
+        ver_frame = tk.Frame(self.root)
+        ver_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+        self.ver_label = tk.Label(ver_frame, text="偵測版本中...", font=("Arial", 8), fg="gray")
+        self.ver_label.pack(side=tk.RIGHT)
 
-        # --- 版本資訊顯示區 (新增) ---
-        info_frame = tk.LabelFrame(self.root, text="組件版本資訊", font=("Arial", 9), padx=10, pady=5)
-        info_frame.pack(pady=10, padx=10, fill=tk.X, side=tk.BOTTOM)
-        
-        # 使用 Grid 來排版版本資訊
-        tk.Label(info_frame, text="yt-dlp:", font=("Arial", 9, "bold")).grid(row=0, column=0, sticky="e", padx=5)
-        self.ver_ytdlp_label = tk.Label(info_frame, text="偵測中...", font=("Arial", 9), fg="#555")
-        self.ver_ytdlp_label.grid(row=0, column=1, sticky="w")
-        
-        tk.Label(info_frame, text="FFmpeg:", font=("Arial", 9, "bold")).grid(row=0, column=2, sticky="e", padx=(20, 5))
-        self.ver_ffmpeg_label = tk.Label(info_frame, text="偵測中...", font=("Arial", 9), fg="#555")
-        self.ver_ffmpeg_label.grid(row=0, column=3, sticky="w")
+    def log(self, msg, color="black"):
+        self.log_text.config(state='normal')
+        self.log_text.insert(tk.END, f"{msg}\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state='disabled')
+        self.root.update_idletasks()
+
+    def set_status(self, msg, color="blue"):
+        self.status_label.config(text=msg, fg=color)
 
     def browse_folder(self):
-        folder = filedialog.askdirectory(initialdir=self.path_entry.get())
-        if folder:
+        d = filedialog.askdirectory()
+        if d:
             self.path_entry.delete(0, tk.END)
-            self.path_entry.insert(0, folder)
-    
-    def log_message(self, message, level="INFO"):
-        self.log_text.insert(tk.END, f"[{level}] {message}\n")
-        self.log_text.see(tk.END)
-        self.root.update_idletasks()
-    
-    def update_status(self, text, color="blue"):
-        self.status_label.config(text=text, fg=color)
+            self.path_entry.insert(0, d)
 
-    # ------------------ 版本檢查邏輯 (新增) ------------------
-    def refresh_versions(self):
-        """在背景執行版本檢查，以免卡住 UI"""
-        threading.Thread(target=self._check_versions_thread, daemon=True).start()
+    def get_yt_dlp_cmd(self):
+        """取得 yt-dlp 執行檔路徑 (優先使用 bin 資料夾)"""
+        bin_exe = os.path.join(self.bin_folder, "yt-dlp.exe")
+        if os.path.exists(bin_exe): return bin_exe
+        if os.path.exists("yt-dlp.exe"): return "yt-dlp.exe"
+        return "yt-dlp" # 嘗試系統路徑
 
-    def _check_versions_thread(self):
-        # 檢查 yt-dlp
-        ytdlp_ver = self.get_cmd_version("yt-dlp.exe", "--version")
-        # 檢查 ffmpeg
-        ffmpeg_ver = self.get_cmd_version("ffmpeg.exe", "-version")
-        
-        # 更新 UI (需切回主線程，但 Tkinter 某些操作在 thread 中是安全的，文字更新通常沒問題)
-        # 為了保險使用 root.after 委派
-        self.root.after(0, lambda: self.update_version_labels(ytdlp_ver, ffmpeg_ver))
-
-    def update_version_labels(self, ytdlp_ver, ffmpeg_ver):
-        # 設定 yt-dlp 顏色
-        if "未偵測到" in ytdlp_ver:
-            self.ver_ytdlp_label.config(text=ytdlp_ver, fg="red")
-        else:
-            self.ver_ytdlp_label.config(text=ytdlp_ver, fg="green")
-            
-        # 設定 ffmpeg 顏色
-        if "未偵測到" in ffmpeg_ver:
-            self.ver_ffmpeg_label.config(text=ffmpeg_ver, fg="red")
-        else:
-            self.ver_ffmpeg_label.config(text=ffmpeg_ver, fg="green")
-
-    def get_cmd_version(self, filename, flag):
-        """執行命令並回傳第一行版本資訊"""
-        if not os.path.exists(filename) and not self.check_command_on_path(filename.replace(".exe", "")):
-            return "未偵測到 (請執行更新)"
-        
-        cmd_name = filename if os.path.exists(filename) else filename.replace(".exe", "")
-        
+    def check_tools_ready(self):
+        """檢查工具是否就緒，若無則提示下載"""
+        exe = self.get_yt_dlp_cmd()
+        # 簡單檢查
         try:
-            # 隱藏 console 視窗
-            startupinfo = None
-            if sys.platform == 'win32':
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            subprocess.run([exe, "--version"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform=='win32' else 0)
+            return exe
+        except FileNotFoundError:
+            if messagebox.askyesno("缺少組件", "找不到 yt-dlp，是否立即下載？"):
+                self.start_update_tools()
+            return None
 
-            result = subprocess.run(
-                [cmd_name, flag], 
-                capture_output=True, 
-                text=True, 
-                encoding='utf-8', 
-                errors='replace',
-                startupinfo=startupinfo
-            )
-            
-            if result.returncode == 0:
-                output = result.stdout.strip()
-                lines = output.split('\n')
-                if not lines: return "未知"
-                
-                first_line = lines[0].strip()
-                
-                # 特殊處理 ffmpeg 輸出: "ffmpeg version N-117865... Copyright..."
-                if "ffmpeg" in first_line.lower():
-                    parts = first_line.split()
-                    if len(parts) >= 3:
-                        return parts[2] # 通常版本號在第三個位置
-                    return "已安裝 (版本未知)"
-                
-                # yt-dlp 通常直接回傳 "2024.11.04"
-                return first_line
-            return "執行錯誤"
-        except Exception:
-            return "錯誤"
-
-    def check_command_on_path(self, cmd):
-        try:
-            subprocess.run([cmd, "--version"], capture_output=True, check=True)
-            return True
-        except:
-            return False
-
-    # ------------------ 更新功能區塊 ------------------
-    def start_update_tools(self):
-        if self.is_downloading or self.is_updating:
-            messagebox.showwarning("警告", "目前有任務正在進行中")
-            return
+    # ================= 核心功能 1: 解析列表 (Podcast/Playlist) =================
+    def start_analyze(self):
+        if self.is_task_running: return
+        url = self.url_entry.get("1.0", tk.END).strip()
+        if not url: return messagebox.showerror("錯誤", "請輸入 URL")
         
-        if messagebox.askyesno("確認更新", "這將會檢查並更新 yt-dlp.exe 和 ffmpeg.exe。\n是否繼續？"):
-            threading.Thread(target=self.run_update_process, daemon=True).start()
+        exe = self.check_tools_ready()
+        if not exe: return
 
-    def run_update_process(self):
-        self.is_updating = True
+        self.is_task_running = True
+        self.set_status("正在解析 RSS/播放清單...", "orange")
+        self.analyze_btn.config(state=tk.DISABLED)
         self.download_btn.config(state=tk.DISABLED)
-        self.log_message("=== 開始檢查組件更新 ===", "UPDATE")
         
+        threading.Thread(target=self.run_analyze, args=(exe, url), daemon=True).start()
+
+    def run_analyze(self, exe, url):
         try:
-            self.update_ytdlp()
-            self.update_ffmpeg()
-            self.log_message("=== 組件檢查與更新完成 ===", "SUCCESS")
-            messagebox.showinfo("完成", "組件更新檢查完成！")
+            self.log(f"開始解析: {url}")
+            # 使用 --dump-single-json --flat-playlist 快速抓取列表而不下載
+            cmd = [
+                exe, 
+                "--dump-single-json", 
+                "--flat-playlist", 
+                "--ignore-errors",
+                url
+            ]
             
-            # 更新完成後，重新讀取版本號
-            self.refresh_versions()
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             
+            process = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', startupinfo=startupinfo)
+            
+            if process.returncode != 0:
+                raise Exception(process.stderr)
+
+            data = json.loads(process.stdout)
+            
+            # 判斷是否為列表
+            entries = []
+            if 'entries' in data:
+                entries = data['entries']
+                title = data.get('title', '未知列表')
+            else:
+                # 可能是單一影片
+                entries = [data]
+                title = data.get('title', '單一影片')
+
+            # 轉回主執行緒顯示選擇視窗
+            self.root.after(0, lambda: self.show_selection_window(title, entries))
+
         except Exception as e:
-            self.log_message(f"更新過程發生錯誤: {str(e)}", "ERROR")
-            messagebox.showerror("更新失敗", str(e))
+            self.log(f"解析失敗: {e}", "red")
+            self.set_status("解析失敗", "red")
         finally:
-            self.is_updating = False
+            self.is_task_running = False
+            self.analyze_btn.config(state=tk.NORMAL)
             self.download_btn.config(state=tk.NORMAL)
-            self.update_status("就緒", "blue")
+            if self.status_label.cget("text") == "正在解析 RSS/播放清單...":
+                 self.set_status("就緒", "blue")
 
-    def update_ytdlp(self):
-        exe_name = "yt-dlp.exe"
-        if not os.path.exists(exe_name):
-            self.log_message(f"找不到 {exe_name}，正在下載最新版...", "UPDATE")
-            try:
-                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-                self.download_file(url, exe_name)
-                self.log_message(f"{exe_name} 下載完成", "SUCCESS")
-            except Exception as e:
-                self.log_message(f"下載 yt-dlp 失敗: {e}", "ERROR")
-        else:
-            self.log_message(f"正在檢查 {exe_name} 更新...", "UPDATE")
-            try:
-                cmd = [exe_name, "-U"]
-                # 隱藏視窗
-                startupinfo = None
-                if sys.platform == 'win32':
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    
-                result = subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    encoding='utf-8', 
-                    errors='replace',
-                    startupinfo=startupinfo
-                )
-                
-                if result.returncode == 0:
-                    output = result.stdout.strip()
-                    if "up-to-date" in output:
-                        self.log_message("yt-dlp 已經是最新版本", "INFO")
-                    else:
-                        self.log_message(f"yt-dlp 更新結果: {output}", "SUCCESS")
-                else:
-                    self.log_message(f"yt-dlp 更新檢查失敗: {result.stderr}", "WARNING")
-            except Exception as e:
-                self.log_message(f"執行 yt-dlp 更新失敗: {e}", "ERROR")
-
-    def update_ffmpeg(self):
-        self.log_message("正在檢查 ffmpeg...", "UPDATE")
-        ffmpeg_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+    def show_selection_window(self, title, entries):
+        top = tk.Toplevel(self.root)
+        top.title(f"選擇下載內容 - {title}")
+        top.geometry("800x600")
         
-        if os.path.exists("ffmpeg.exe"):
-            self.log_message("ffmpeg.exe 已存在，跳過下載", "INFO")
-            return
-
-        self.log_message("正在下載 FFmpeg...", "UPDATE")
-        self.update_status("正在下載 FFmpeg...", "orange")
+        # 頂部控制區
+        ctrl_frame = tk.Frame(top, pady=10)
+        ctrl_frame.pack(fill=tk.X, padx=10)
         
-        try:
-            with urllib.request.urlopen(ffmpeg_url) as response:
-                zip_data = response.read()
-            
-            self.log_message("FFmpeg 下載完成，解壓縮中...", "UPDATE")
-            
-            with zipfile.ZipFile(BytesIO(zip_data)) as zf:
-                ffmpeg_src = None
-                for name in zf.namelist():
-                    if name.endswith("bin/ffmpeg.exe"):
-                        ffmpeg_src = name
-                        break
-                
-                if ffmpeg_src:
-                    with zf.open(ffmpeg_src) as source, open("ffmpeg.exe", "wb") as target:
-                        shutil.copyfileobj(source, target)
-                    self.log_message("ffmpeg.exe 已安裝", "SUCCESS")
-                else:
-                    self.log_message("壓縮檔中找不到 ffmpeg.exe", "ERROR")
-        except Exception as e:
-            self.log_message(f"FFmpeg 安裝失敗: {e}", "ERROR")
-            
-    def download_file(self, url, filename):
-        with urllib.request.urlopen(url) as response:
-            with open(filename, 'wb') as f:
-                shutil.copyfileobj(response, f)
-
-    # ------------------ 下載功能區塊 ------------------
-    def start_download(self):
-        if self.is_downloading or self.is_updating:
-            messagebox.showwarning("警告", "已有任務正在進行中")
-            return
-        threading.Thread(target=self.download_video, daemon=True).start()
-    
-    def download_video(self):
-        self.is_downloading = True
-        self.download_btn.config(state=tk.DISABLED, bg="#cccccc")
+        tk.Label(ctrl_frame, text=f"共找到 {len(entries)} 個項目").pack(side=tk.LEFT)
         
-        url = self.url_entry.get("1.0", "end-1c").strip()
+        # Treeview 列表
+        columns = ("chk", "date", "title", "duration")
+        tree = ttk.Treeview(top, columns=columns, show="headings", selectmode="extended")
+        
+        tree.heading("chk", text="序號")
+        tree.heading("date", text="發布日期")
+        tree.heading("title", text="標題")
+        tree.heading("duration", text="時長")
+        
+        tree.column("chk", width=50, anchor="center")
+        tree.column("date", width=100, anchor="center")
+        tree.column("title", width=500)
+        tree.column("duration", width=80, anchor="center")
+        
+        scrollbar = ttk.Scrollbar(top, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 填充資料
+        items_map = {} # 用來對應 tree item id 到真實資料
+        for idx, entry in enumerate(entries, 1):
+            # 處理日期
+            date_str = entry.get('upload_date', '----')
+            if len(date_str) == 8:
+                date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            
+            # 處理時長
+            dur = entry.get('duration')
+            dur_str = str(datetime.timedelta(seconds=int(dur))) if dur else "--:--"
+            
+            item_id = tree.insert("", "end", values=(idx, date_str, entry.get('title'), dur_str))
+            items_map[item_id] = entry
+
+        # 底部按鈕
+        btn_frame = tk.Frame(top, pady=10)
+        btn_frame.pack(fill=tk.X)
+
+        def select_all():
+            for item in tree.get_children(): tree.selection_add(item)
+            
+        def select_none():
+            tree.selection_remove(tree.get_children())
+            
+        def do_download():
+            selected_ids = tree.selection()
+            if not selected_ids:
+                return messagebox.showwarning("提示", "未選擇任何項目")
+            
+            # 收集要下載的 URL
+            target_urls = []
+            for iid in selected_ids:
+                entry = items_map[iid]
+                # 優先使用 url (原始檔案位址) 若無則用 webpage_url
+                u = entry.get('url') or entry.get('webpage_url')
+                if u: target_urls.append((entry.get('title'), u))
+            
+            top.destroy()
+            self.start_batch_download(target_urls)
+
+        tk.Button(btn_frame, text="全選", command=select_all).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="全不選", command=select_none).pack(side=tk.LEFT)
+        tk.Button(btn_frame, text="下載選取項目", bg="#4CAF50", fg="white", command=do_download, font=("Arial", 11, "bold")).pack(side=tk.RIGHT, padx=10)
+
+    # ================= 核心功能 2: 批次下載 =================
+    def start_batch_download(self, targets):
+        """targets: list of (title, url)"""
+        exe = self.check_tools_ready()
+        if not exe: return
+        
+        self.is_task_running = True
+        self.stop_flag = False
+        self.download_btn.config(state=tk.DISABLED, text="下載中...")
+        self.analyze_btn.config(state=tk.DISABLED)
+        
+        threading.Thread(target=self.run_batch_download, args=(exe, targets), daemon=True).start()
+        
+    def start_direct_download(self):
+        """舊有的直接下載功能 (單一連結)"""
+        if self.is_task_running: return
+        url = self.url_entry.get("1.0", tk.END).strip()
+        if not url: return
+        self.start_batch_download([("直接下載任務", url)])
+
+    def run_batch_download(self, exe, targets):
+        total = len(targets)
+        save_path = self.path_entry.get()
         start_sec = self.start_sec_entry.get().strip()
         end_sec = self.end_sec_entry.get().strip()
-        download_path = self.path_entry.get().strip()
         
-        if not url:
-            messagebox.showerror("錯誤", "請輸入 YouTube URL")
-            self.reset_download_state()
-            return
-        
-        section = None
+        # 處理 section 字串
+        section_cmd = []
         if start_sec or end_sec:
             try:
-                if start_sec and not start_sec.isdigit(): raise ValueError("開始秒數錯誤")
-                if end_sec and not end_sec.isdigit(): raise ValueError("結束秒數錯誤")
-                if start_sec and end_sec and int(start_sec) >= int(end_sec): raise ValueError("時間範圍錯誤")
+                s = start_sec if start_sec else "0"
+                e = end_sec if end_sec else "inf"
+                section_cmd = ["--download-sections", f"*{s}-{e}", "--force-keyframes-at-cuts"]
+            except: pass
+
+        self.log(f"=== 開始批次下載，共 {total} 個項目 ===", "blue")
+        
+        for i, (title, url) in enumerate(targets, 1):
+            if self.stop_flag: 
+                self.log("下載已手動停止", "red")
+                break
                 
-                if start_sec and end_sec: section = f"*{start_sec}-{end_sec}"
-                elif start_sec: section = f"*{start_sec}-inf"
-                elif end_sec: section = f"*0-{end_sec}"
-            except ValueError as e:
-                messagebox.showerror("錯誤", str(e))
-                self.reset_download_state()
-                return
-        
-        try:
-            Path(download_path).mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            messagebox.showerror("錯誤", f"路徑錯誤: {e}")
-            self.reset_download_state()
-            return
-        
-        exe_path = "yt-dlp.exe" if os.path.exists("yt-dlp.exe") else "yt-dlp"
-        if not self.check_command_on_path(exe_path):
-            if messagebox.askyesno("缺少組件", "找不到 yt-dlp，是否自動下載？"):
-                self.update_ytdlp()
-                self.refresh_versions() # 更新介面顯示
-                if not os.path.exists("yt-dlp.exe"):
-                    messagebox.showerror("錯誤", "下載失敗")
-                    self.reset_download_state()
-                    return
-                exe_path = "yt-dlp.exe"
-            else:
-                self.reset_download_state()
-                return
-        
-        cmd = [
-            exe_path,
-            "--ignore-config",
-            "--external-downloader", "aria2c",
-            "--external-downloader-args", 'aria2c:"--conf-path=aria2_yt-dlp.conf"',
-            "--youtube-skip-dash-manifest",
-            "--embed-metadata", "--no-part",
-            "--sub-lang", "zh-TW", "--write-sub", "--convert-subs", "srt",
-            "-P", download_path
-        ]
-        
-        if section:
-            cmd.extend([
-                "-o", "%(uploader)s/%(playlist)s_%(upload_date)s_%(title)s_%(section_start)s-%(section_end)s.%(ext)s",
-                "--download-sections", section,
-                "--force-keyframes-at-cuts"
-            ])
-        else:
-            cmd.extend(["-o", "%(uploader)s/%(playlist)s_%(upload_date)s_%(title)s.%(ext)s"])
-        
-        cmd.append(url)
-        
-        self.log_text.delete(1.0, tk.END)
-        self.log_message(f"開始下載: {url}")
-        self.update_status("正在下載...", "orange")
-        
-        try:
-            system_encoding = sys.getdefaultencoding() if sys.platform != 'win32' else 'cp950'
-            startupinfo = None
-            if sys.platform == 'win32':
+            self.set_status(f"正在下載 ({i}/{total}): {title[:30]}...", "orange")
+            self.log(f"[{i}/{total}] 處理中: {title}")
+            
+            cmd = [
+                exe,
+                "--ffmpeg-location", self.bin_folder, # 指定 ffmpeg 位置
+                "--ignore-config",
+                "--no-part",
+                "-P", save_path,
+                "-o", "%(upload_date)s_%(title)s.%(ext)s", # 檔名格式
+                url
+            ] + section_cmd
+            
+            try:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                text=True,
-                encoding=system_encoding,
-                errors='replace',
-                startupinfo=startupinfo
-            )
-            
-            for line in iter(process.stdout.readline, ""):
-                if line:
-                    self.log_message(line.rstrip())
-            
-            process.stdout.close()
-            retcode = process.wait()
-            
-            if retcode == 0:
-                self.log_message("下載完成！", "SUCCESS")
-                self.update_status("下載完成", "green")
-                messagebox.showinfo("成功", "影片下載完成！")
-            else:
-                self.log_message(f"下載失敗 (Code: {retcode})", "ERROR")
-                self.update_status("下載失敗", "red")
-                messagebox.showerror("錯誤", f"下載失敗，Code: {retcode}\n請檢查 ffmpeg 是否存在？")
                 
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                      text=True, encoding='utf-8', errors='replace', startupinfo=startupinfo)
+                
+                for line in proc.stdout:
+                    if "[download]" in line and "%" in line:
+                        # 簡化進度條顯示，避免 log 刷太快
+                        pass 
+                    elif "ERROR" in line:
+                        self.log(line.strip(), "red")
+                
+                proc.wait()
+                if proc.returncode == 0:
+                    self.log(f"✓ 完成: {title}", "green")
+                else:
+                    self.log(f"✗ 失敗: {title}", "red")
+                    
+            except Exception as e:
+                self.log(f"執行錯誤: {e}", "red")
+
+        self.is_task_running = False
+        self.set_status("任務結束", "blue")
+        self.root.after(0, lambda: self.download_btn.config(state=tk.NORMAL, text="直接下載"))
+        self.root.after(0, lambda: self.analyze_btn.config(state=tk.NORMAL))
+        messagebox.showinfo("完成", "所有排程任務已結束")
+
+    # ================= 工具與更新 (整合 v3 功能) =================
+    def start_update_tools(self):
+        if self.is_task_running: return messagebox.showwarning("忙碌中", "請等待目前任務結束")
+        if messagebox.askyesno("更新", "確定要檢查並更新 yt-dlp 和 ffmpeg 嗎？"):
+            self.is_task_running = True
+            self.set_status("正在更新...", "purple")
+            threading.Thread(target=self.run_update, daemon=True).start()
+
+    def run_update(self):
+        try:
+            self.log("=== 開始檢查更新 ===")
+            
+            # 1. Update yt-dlp
+            yt_path = os.path.join(self.bin_folder, "yt-dlp.exe")
+            if not os.path.exists(yt_path):
+                self.log("下載 yt-dlp...")
+                urllib.request.urlretrieve("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", yt_path)
+            else:
+                self.log("檢查 yt-dlp 更新...")
+                subprocess.run([yt_path, "-U"], creationflags=0x08000000) # CREATE_NO_WINDOW
+            
+            # 2. Update ffmpeg
+            ff_path = os.path.join(self.bin_folder, "ffmpeg.exe")
+            if not os.path.exists(ff_path):
+                self.log("下載 ffmpeg (這可能需要一點時間)...")
+                url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+                with urllib.request.urlopen(url) as resp:
+                    z = zipfile.ZipFile(BytesIO(resp.read()))
+                    for n in z.namelist():
+                        if n.endswith("bin/ffmpeg.exe"):
+                            with z.open(n) as s, open(ff_path, "wb") as t:
+                                shutil.copyfileobj(s, t)
+                            break
+            
+            self.log("更新完成！", "green")
+            self.refresh_versions()
         except Exception as e:
-            error_msg = f"發生錯誤: {str(e)}"
-            self.log_message(error_msg, "ERROR")
-            self.update_status("錯誤", "red")
-            messagebox.showerror("錯誤", error_msg)
+            self.log(f"更新失敗: {e}", "red")
         finally:
-            self.reset_download_state()
-    
-    def reset_download_state(self):
-        self.is_downloading = False
-        self.download_btn.config(state=tk.NORMAL, bg="#4CAF50")
-        if self.status_label.cget("text") == "正在下載...":
-            self.update_status("就緒", "blue")
+            self.is_task_running = False
+            self.set_status("就緒")
+
+    def refresh_versions(self):
+        def _check():
+            yt_ver = self._get_ver(os.path.join(self.bin_folder, "yt-dlp.exe"), "--version")
+            ff_ver = self._get_ver(os.path.join(self.bin_folder, "ffmpeg.exe"), "-version")
+            self.ver_label.config(text=f"yt-dlp: {yt_ver} | ffmpeg: {ff_ver}")
+            
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _get_ver(self, path, arg):
+        if not os.path.exists(path): return "未安裝"
+        try:
+            r = subprocess.run([path, arg], capture_output=True, text=True, creationflags=0x08000000)
+            line = r.stdout.split('\n')[0].strip()
+            if "ffmpeg" in line.lower(): return line.split()[2] # version info
+            return line
+        except: return "未知"
 
 if __name__ == "__main__":
     root = tk.Tk()
