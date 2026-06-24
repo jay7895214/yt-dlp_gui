@@ -3,3 +3,6 @@ ffplay.exe
 ffmpeg.exe
 yt-dlp.exe
 bin/
+config.json
+__pycache__/
+ffmpeg-master-latest-win64-gpl/

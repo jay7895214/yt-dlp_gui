@@ -14,11 +14,24 @@ from pathlib import Path
 from io import BytesIO
 
 
+CONFIG_FILE = "config.json"
+DEFAULT_CONFIG = {
+    "save_path": r"D:\Download\yt-dlp",
+    "format": "best",
+    "container": "auto",
+    "write_subs": False,
+    "auto_subs": False,
+    "embed_subs": False,
+    "sub_langs": "zh-TW,en",
+    "sub_format": "srt",
+}
+
+
 class YouTubeDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Universal Downloader (YouTube/Podcast) v1.1.0")
-        self.root.geometry("780x820")
+        self.root.title("Universal Downloader (YouTube/Podcast) v1.2.0")
+        self.root.geometry("780x850")
         self.root.minsize(700, 600)
 
         self.is_task_running = False  # 統稱任務狀態 (下載或更新或解析中)
@@ -29,9 +42,55 @@ class YouTubeDownloader:
         self.bin_folder = os.path.join(os.getcwd(), "bin")
         os.makedirs(self.bin_folder, exist_ok=True)
 
+        # 讀取設定檔
+        self.config = self._load_config()
+
         self.setup_menu()
         self.setup_ui()
         self.refresh_versions()
+
+        # 關閉視窗時自動保存設定
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ======================== 設定檔 ========================
+    def _get_config_path(self):
+        return os.path.join(os.getcwd(), CONFIG_FILE)
+
+    def _load_config(self):
+        """從 config.json 讀取設定，不存在則使用預設值"""
+        path = self._get_config_path()
+        config = DEFAULT_CONFIG.copy()
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    saved = json.load(f)
+                config.update(saved)
+            except Exception:
+                pass
+        return config
+
+    def _save_config(self):
+        """將目前 UI 設定值寫入 config.json"""
+        config = {
+            "save_path": self.path_entry.get(),
+            "format": self.format_var.get(),
+            "container": self.container_var.get(),
+            "write_subs": self.write_subs_var.get(),
+            "auto_subs": self.auto_subs_var.get(),
+            "embed_subs": self.embed_subs_var.get(),
+            "sub_langs": self.sub_lang_entry.get().strip(),
+            "sub_format": self.sub_format_var.get(),
+        }
+        try:
+            with open(self._get_config_path(), 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _on_close(self):
+        """視窗關閉時自動保存設定"""
+        self._save_config()
+        self.root.destroy()
 
     # ======================== 選單 ========================
     def setup_menu(self):
@@ -43,6 +102,8 @@ class YouTubeDownloader:
 
     # ======================== UI 佈局 ========================
     def setup_ui(self):
+        cfg = self.config
+
         # --- URL 輸入區 ---
         url_frame = tk.Frame(self.root)
         url_frame.pack(pady=(10, 5), padx=10, fill=tk.X)
@@ -94,29 +155,37 @@ class YouTubeDownloader:
         tk.Label(path_frame, text="儲存位置:").pack(side=tk.LEFT)
         self.path_entry = tk.Entry(path_frame)
         self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.path_entry.insert(0, r"D:\Download\yt-dlp")
+        self.path_entry.insert(0, cfg["save_path"])
         tk.Button(path_frame, text="瀏覽", command=self.browse_folder).pack(side=tk.LEFT)
 
         # 影片格式選擇
         fmt_frame = tk.Frame(options_frame)
         fmt_frame.pack(fill=tk.X, pady=3)
         tk.Label(fmt_frame, text="影片格式:").pack(side=tk.LEFT)
-        self.format_var = tk.StringVar(value="best")
+        self.format_var = tk.StringVar(value=cfg["format"])
         for text, val in [("最佳畫質", "best"), ("1080p", "1080"), ("720p", "720"),
                           ("480p", "480"), ("僅音訊", "audio")]:
             tk.Radiobutton(fmt_frame, text=text, variable=self.format_var, value=val).pack(side=tk.LEFT, padx=4)
+
+        # 容器格式偏好
+        container_frame = tk.Frame(options_frame)
+        container_frame.pack(fill=tk.X, pady=3)
+        tk.Label(container_frame, text="容器格式:").pack(side=tk.LEFT)
+        self.container_var = tk.StringVar(value=cfg["container"])
+        for text, val in [("自動 (最佳)", "auto"), ("MP4 偏好", "mp4"), ("WebM 偏好", "webm")]:
+            tk.Radiobutton(container_frame, text=text, variable=self.container_var, value=val).pack(side=tk.LEFT, padx=4)
 
         # 字幕選項
         sub_frame = tk.Frame(options_frame)
         sub_frame.pack(fill=tk.X, pady=3)
 
-        self.write_subs_var = tk.BooleanVar(value=False)
+        self.write_subs_var = tk.BooleanVar(value=cfg["write_subs"])
         tk.Checkbutton(sub_frame, text="下載字幕", variable=self.write_subs_var).pack(side=tk.LEFT)
 
-        self.auto_subs_var = tk.BooleanVar(value=False)
+        self.auto_subs_var = tk.BooleanVar(value=cfg["auto_subs"])
         tk.Checkbutton(sub_frame, text="含自動產生字幕", variable=self.auto_subs_var).pack(side=tk.LEFT, padx=(10, 0))
 
-        self.embed_subs_var = tk.BooleanVar(value=False)
+        self.embed_subs_var = tk.BooleanVar(value=cfg["embed_subs"])
         tk.Checkbutton(sub_frame, text="嵌入字幕至影片", variable=self.embed_subs_var).pack(side=tk.LEFT, padx=(10, 0))
 
         # 字幕語言 & 格式
@@ -125,11 +194,11 @@ class YouTubeDownloader:
         tk.Label(sub_lang_frame, text="字幕語言:").pack(side=tk.LEFT)
         self.sub_lang_entry = tk.Entry(sub_lang_frame, width=20)
         self.sub_lang_entry.pack(side=tk.LEFT, padx=5)
-        self.sub_lang_entry.insert(0, "zh-TW,en")
+        self.sub_lang_entry.insert(0, cfg["sub_langs"])
         tk.Label(sub_lang_frame, text="(逗號分隔, 如 zh-TW,en,ja)").pack(side=tk.LEFT, padx=5)
 
         tk.Label(sub_lang_frame, text="格式:").pack(side=tk.LEFT, padx=(15, 0))
-        self.sub_format_var = tk.StringVar(value="srt")
+        self.sub_format_var = tk.StringVar(value=cfg["sub_format"])
         ttk.Combobox(
             sub_lang_frame, textvariable=self.sub_format_var,
             values=["srt", "vtt", "ass"], width=5, state="readonly"
@@ -204,32 +273,62 @@ class YouTubeDownloader:
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         return si
 
+    def _get_subprocess_env(self):
+        """取得強制 UTF-8 輸出的環境變數 (修正 yt-dlp 在 Windows 上的亂碼問題)"""
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
+        return env
+
     def _build_format_arg(self):
-        """根據格式選擇建立 -f 參數"""
+        """根據格式選擇與容器偏好建立 -f 參數"""
         fmt = self.format_var.get()
-        if fmt == "best":
-            return "bestvideo+bestaudio/best"
-        elif fmt == "audio":
+        container = self.container_var.get()
+
+        if fmt == "audio":
             return "bestaudio/best"
+
+        if fmt == "best":
+            base = "bestvideo"
         else:
-            return f"bestvideo[height<={fmt}]+bestaudio/best"
+            base = f"bestvideo[height<={fmt}]"
+
+        if container == "mp4":
+            return f"{base}[ext=mp4]+bestaudio[ext=m4a]/{base}+bestaudio/best"
+        elif container == "webm":
+            return f"{base}[ext=webm]+bestaudio[ext=webm]/{base}+bestaudio/best"
+        else:
+            return f"{base}+bestaudio/best"
 
     def _build_subtitle_args(self):
-        """建立字幕相關命令列參數"""
+        """建立字幕相關命令列參數 (主頁面設定)"""
         args = []
-        if self.write_subs_var.get():
+        need_write = self.write_subs_var.get()
+        need_auto = self.auto_subs_var.get()
+        need_embed = self.embed_subs_var.get()
+
+        # 嵌入字幕需要先下載字幕
+        if need_embed:
+            need_write = True
+
+        if need_write:
             args.append("--write-subs")
-        if self.auto_subs_var.get():
+        if need_auto:
             args.append("--write-auto-subs")
-        if self.write_subs_var.get() or self.auto_subs_var.get():
+
+        if need_write or need_auto:
             lang = self.sub_lang_entry.get().strip()
             if lang:
                 args.extend(["--sub-langs", lang])
-            fmt = self.sub_format_var.get()
-            if fmt:
-                args.extend(["--convert-subs", fmt])
-        if self.embed_subs_var.get():
+            else:
+                args.extend(["--sub-langs", "all"])
+            sub_fmt = self.sub_format_var.get()
+            if sub_fmt:
+                args.extend(["--convert-subs", sub_fmt])
+
+        if need_embed:
             args.append("--embed-subs")
+
         return args
 
     def _build_section_args(self):
@@ -291,7 +390,8 @@ class YouTubeDownloader:
             process = subprocess.run(
                 cmd, capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
-                startupinfo=self._get_startupinfo()
+                startupinfo=self._get_startupinfo(),
+                env=self._get_subprocess_env()
             )
 
             if process.returncode != 0:
@@ -331,7 +431,8 @@ class YouTubeDownloader:
             process = subprocess.run(
                 cmd, capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
-                startupinfo=self._get_startupinfo()
+                startupinfo=self._get_startupinfo(),
+                env=self._get_subprocess_env()
             )
 
             if process.returncode != 0:
@@ -496,8 +597,12 @@ class YouTubeDownloader:
         fmt_tab = tk.Frame(notebook)
         notebook.add(fmt_tab, text="📹 影片格式")
 
+        # 格式列表
+        fmt_tree_frame = tk.Frame(fmt_tab)
+        fmt_tree_frame.pack(fill=tk.BOTH, expand=True)
+
         fmt_columns = ("format_id", "ext", "resolution", "fps", "vcodec", "acodec", "size", "note")
-        fmt_tree = ttk.Treeview(fmt_tab, columns=fmt_columns, show="headings", selectmode="browse")
+        fmt_tree = ttk.Treeview(fmt_tree_frame, columns=fmt_columns, show="headings", selectmode="browse")
 
         for col, heading, width, anchor in [
             ("format_id", "ID", 60, "center"), ("ext", "格式", 50, "center"),
@@ -508,7 +613,7 @@ class YouTubeDownloader:
             fmt_tree.heading(col, text=heading)
             fmt_tree.column(col, width=width, anchor=anchor)
 
-        fmt_scroll = ttk.Scrollbar(fmt_tab, orient=tk.VERTICAL, command=fmt_tree.yview)
+        fmt_scroll = ttk.Scrollbar(fmt_tree_frame, orient=tk.VERTICAL, command=fmt_tree.yview)
         fmt_tree.configure(yscroll=fmt_scroll.set)
         fmt_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         fmt_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -548,12 +653,46 @@ class YouTubeDownloader:
             )
             format_map[item_id] = f
 
+        # 影片格式分頁內的下載按鈕
+        fmt_btn_frame = tk.Frame(fmt_tab, pady=5)
+        fmt_btn_frame.pack(fill=tk.X, padx=5)
+
+        def do_download_selected_format():
+            """僅下載選取的影片格式，不套用主頁面設定"""
+            selected = fmt_tree.selection()
+            if not selected:
+                return messagebox.showwarning("提示", "請先在上方選取一個影片格式")
+
+            url = data.get('webpage_url') or data.get('original_url', '')
+            if not url:
+                return messagebox.showerror("錯誤", "找不到影片 URL")
+
+            f = format_map[selected[0]]
+            format_arg = f.get('format_id')
+            # 若是純影像串流，自動加上最佳音訊
+            if f.get('acodec') in ('none', None) and f.get('vcodec') not in ('none', None):
+                format_arg = f"{format_arg}+bestaudio"
+
+            top.destroy()
+            # subtitle_args=[] 表示不帶任何字幕參數
+            self._download_single(exe, url, v_title, format_id=format_arg, subtitle_args=[])
+
+        tk.Button(
+            fmt_btn_frame, text="⬇️ 下載選取格式",
+            command=do_download_selected_format,
+            bg="#FF9800", fg="white", font=("Arial", 10, "bold")
+        ).pack(side=tk.LEFT, padx=5)
+
         # ===== 頁籤 2: 字幕 =====
         sub_tab = tk.Frame(notebook)
         notebook.add(sub_tab, text="📝 字幕")
 
+        # 字幕列表
+        sub_tree_frame = tk.Frame(sub_tab)
+        sub_tree_frame.pack(fill=tk.BOTH, expand=True)
+
         sub_columns = ("type", "lang", "name", "formats")
-        sub_tree = ttk.Treeview(sub_tab, columns=sub_columns, show="headings", selectmode="extended")
+        sub_tree = ttk.Treeview(sub_tree_frame, columns=sub_columns, show="headings", selectmode="extended")
 
         for col, heading, width in [
             ("type", "類型", 120), ("lang", "語言代碼", 100),
@@ -564,10 +703,13 @@ class YouTubeDownloader:
         sub_tree.column("type", anchor="center")
         sub_tree.column("lang", anchor="center")
 
-        sub_scroll = ttk.Scrollbar(sub_tab, orient=tk.VERTICAL, command=sub_tree.yview)
+        sub_scroll = ttk.Scrollbar(sub_tree_frame, orient=tk.VERTICAL, command=sub_tree.yview)
         sub_tree.configure(yscroll=sub_scroll.set)
         sub_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sub_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 儲存字幕 metadata 供下載使用
+        sub_items_map = {}  # tree_item_id -> {"type": "manual"/"auto", "lang": "xx"}
 
         # 手動上傳的字幕
         subtitles = data.get('subtitles', {})
@@ -576,7 +718,8 @@ class YouTubeDownloader:
                 continue
             name = subs[0].get('name', '') if subs else ''
             fmts = ', '.join(sorted(set(s.get('ext', '?') for s in subs)))
-            sub_tree.insert("", "end", values=("✋ 手動上傳", lang, name, fmts))
+            iid = sub_tree.insert("", "end", values=("✋ 手動上傳", lang, name, fmts))
+            sub_items_map[iid] = {"type": "manual", "lang": lang}
 
         # 自動產生的字幕
         auto_captions = data.get('automatic_captions', {})
@@ -585,59 +728,66 @@ class YouTubeDownloader:
                 continue
             name = subs[0].get('name', '') if subs else ''
             fmts = ', '.join(sorted(set(s.get('ext', '?') for s in subs)))
-            sub_tree.insert("", "end", values=("🤖 自動產生", lang, name, fmts))
+            iid = sub_tree.insert("", "end", values=("🤖 自動產生", lang, name, fmts))
+            sub_items_map[iid] = {"type": "auto", "lang": lang}
 
-        # --- 底部下載區 ---
-        dl_frame = tk.LabelFrame(top, text="下載", padx=10, pady=5)
-        dl_frame.pack(fill=tk.X, padx=10, pady=5)
+        # 字幕分頁內的下載按鈕
+        sub_btn_frame = tk.Frame(sub_tab, pady=5)
+        sub_btn_frame.pack(fill=tk.X, padx=5)
 
-        tk.Label(dl_frame, text="可在上方選取特定格式，或直接使用主視窗設定下載",
-                 font=("Arial", 9), fg="gray").pack(anchor="w")
+        def do_download_selected_subs():
+            """僅下載選取的字幕，不下載影片 (--skip-download)"""
+            selected = sub_tree.selection()
+            if not selected:
+                return messagebox.showwarning("提示", "請先在上方選取要下載的字幕")
 
-        dl_btn_frame = tk.Frame(dl_frame)
-        dl_btn_frame.pack(fill=tk.X, pady=5)
-
-        def do_download_selected_format():
-            """以選取的特定格式下載"""
             url = data.get('webpage_url') or data.get('original_url', '')
             if not url:
                 return messagebox.showerror("錯誤", "找不到影片 URL")
 
-            selected = fmt_tree.selection()
-            format_arg = None
-            if selected:
-                f = format_map[selected[0]]
-                format_arg = f.get('format_id')
-                # 若是純影像串流，自動加上最佳音訊
-                if f.get('acodec') in ('none', None) and f.get('vcodec') not in ('none', None):
-                    format_arg = f"{format_arg}+bestaudio"
+            # 收集選取的字幕資訊
+            manual_langs = []
+            auto_langs = []
+            for iid in selected:
+                info = sub_items_map[iid]
+                if info["type"] == "manual":
+                    manual_langs.append(info["lang"])
+                else:
+                    auto_langs.append(info["lang"])
+
+            # 組裝字幕參數
+            sub_args = ["--skip-download"]
+
+            if manual_langs:
+                sub_args.append("--write-subs")
+            if auto_langs:
+                sub_args.append("--write-auto-subs")
+
+            # 合併語言清單 (去重但保持順序)
+            all_langs = list(dict.fromkeys(manual_langs + auto_langs))
+            sub_args.extend(["--sub-langs", ",".join(all_langs)])
+
+            # 使用主頁面的字幕格式設定
+            sub_fmt = self.sub_format_var.get()
+            if sub_fmt:
+                sub_args.extend(["--convert-subs", sub_fmt])
 
             top.destroy()
-            self._download_single(exe, url, v_title, format_arg)
-
-        def do_download_default():
-            """以主視窗格式設定下載"""
-            url = data.get('webpage_url') or data.get('original_url', '')
-            if not url:
-                return messagebox.showerror("錯誤", "找不到影片 URL")
-            top.destroy()
-            self.start_batch_download([(v_title, url)])
+            self._download_single(exe, url, v_title, format_id=None, subtitle_args=sub_args)
 
         tk.Button(
-            dl_btn_frame, text="⬇️ 以選取格式下載",
-            command=do_download_selected_format,
-            bg="#FF9800", fg="white", font=("Arial", 10, "bold")
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            dl_btn_frame, text="⬇️ 以主視窗設定下載",
-            command=do_download_default,
-            bg="#4CAF50", fg="white", font=("Arial", 10, "bold")
+            sub_btn_frame, text="📝 僅下載選取字幕",
+            command=do_download_selected_subs,
+            bg="#9C27B0", fg="white", font=("Arial", 10, "bold")
         ).pack(side=tk.LEFT, padx=5)
 
     # ======================== 核心功能 2: 下載 ========================
-    def _download_single(self, exe, url, title, format_id=None):
-        """下載單一影片 (可指定 format_id)"""
+    def _download_single(self, exe, url, title, format_id=None, subtitle_args=None):
+        """
+        下載單一影片或字幕。
+        format_id: 指定格式 (None = 使用主頁面設定)
+        subtitle_args: 明確指定字幕參數 (None = 使用主頁面設定, [] = 不處理字幕)
+        """
         self.is_task_running = True
         self.stop_flag = False
         self._set_buttons_busy(True)
@@ -655,13 +805,23 @@ class YouTubeDownloader:
                 "-o", "%(upload_date)s_%(title)s.%(ext)s",
             ]
 
+            # 格式選擇
+            is_sub_only = subtitle_args and "--skip-download" in subtitle_args
             if format_id:
                 cmd.extend(["-f", format_id])
-            else:
+            elif not is_sub_only:
                 cmd.extend(["-f", self._build_format_arg()])
 
-            cmd.extend(self._build_subtitle_args())
-            cmd.extend(self._build_section_args())
+            # 字幕參數
+            if subtitle_args is not None:
+                cmd.extend(subtitle_args)
+            else:
+                cmd.extend(self._build_subtitle_args())
+
+            # 時間裁切 (僅下載字幕時不需要)
+            if not is_sub_only:
+                cmd.extend(self._build_section_args())
+
             cmd.append(url)
 
             self.log(f"開始下載: {title}")
@@ -671,7 +831,8 @@ class YouTubeDownloader:
                 self.current_process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace',
-                    startupinfo=self._get_startupinfo()
+                    startupinfo=self._get_startupinfo(),
+                    env=self._get_subprocess_env()
                 )
 
                 for line in self.current_process.stdout:
@@ -758,7 +919,8 @@ class YouTubeDownloader:
                 self.current_process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace',
-                    startupinfo=self._get_startupinfo()
+                    startupinfo=self._get_startupinfo(),
+                    env=self._get_subprocess_env()
                 )
 
                 for line in self.current_process.stdout:
