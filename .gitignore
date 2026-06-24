@@ -1,6 +1,5 @@
 ffprobe.exe
 ffplay.exe
 ffmpeg.exe
-download_log.txt
 yt-dlp.exe
-ffmpeg-master-latest-win64-gpl/
+bin/
