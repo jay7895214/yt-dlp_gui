@@ -412,10 +412,16 @@ class YouTubeDownloader:
         self.stop_flag = True
         if self.current_process:
             try:
-                self.current_process.terminate()
+                self.log("⏹ 正在停止任務...", "red")
+                if sys.platform == 'win32':
+                    subprocess.call(
+                        ['taskkill', '/F', '/T', '/PID', str(self.current_process.pid)],
+                        startupinfo=self._get_startupinfo()
+                    )
+                else:
+                    self.current_process.terminate()
             except Exception:
                 pass
-        self.log("⏹ 正在停止任務...", "red")
 
     def _set_buttons_busy(self, busy=True):
         """切換按鈕啟用/禁用狀態"""
@@ -894,13 +900,16 @@ class YouTubeDownloader:
             self.set_status(f"正在下載: {title[:40]}...", "orange")
 
             try:
+                # 若為 Windows，移除 CREATE_NEW_PROCESS_GROUP 避免副作用，改用 taskkill
                 self.current_process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace',
                     startupinfo=self._get_startupinfo(),
                     env=self._get_subprocess_env()
                 )
-
+                
+                is_livestream = False
+                
                 final_filepath = None
                 for line in self.current_process.stdout:
                     line = line.strip()
@@ -917,7 +926,41 @@ class YouTubeDownloader:
                     elif line.startswith("[download] ") and "has already been downloaded" in line:
                         final_filepath = line.split("[download] ")[1].split(" has already")[0].strip()
 
-                    if "[download]" in line and "%" in line:
+                    # 判斷 ffmpeg 直播日誌 (無百分比，有 frame, size, time)
+                    # 例如: frame=  719 fps= 87 q=-1.0 size=    7168KiB time=00:00:12.00 bitrate=4891.0kbits/s speed=1.46x
+                    if "size=" in line and "time=" in line and "bitrate=" in line:
+                        if not is_livestream:
+                            is_livestream = True
+                            self.progress_bar.config(mode="indeterminate")
+                            self.progress_bar.start()
+                        
+                        match = re.search(r'size=\s*(.*?)\s+time=(.*?)\s+bitrate=.*?speed=\s*(.*?)x', line)
+                        if match:
+                            size = match.group(1).strip()
+                            time_str = match.group(2).strip()
+                            speed = match.group(3).strip()
+                            self.set_status(f"直播錄製中: 已下載 {size} | 速度: {speed}x | 時間: {time_str}", "orange")
+
+                    # 原本的 yt-dlp 內部下載日誌
+                    elif "[download]" in line and "at" in line and "%" not in line and "MiB" in line:
+                        if not is_livestream:
+                            is_livestream = True
+                            self.progress_bar.config(mode="indeterminate")
+                            self.progress_bar.start()
+                        
+                        match = re.search(r'\[download\]\s+(.*?)\s+at\s+(.*?)\s+\((.*?)\)', line)
+                        if match:
+                            size = match.group(1)
+                            speed = match.group(2)
+                            time_str = match.group(3)
+                            self.set_status(f"直播錄製中: 已下載 {size} | 速度: {speed} | 時間: {time_str}", "orange")
+
+                    elif "[download]" in line and "%" in line:
+                        if is_livestream:
+                            self.progress_bar.stop()
+                            self.progress_bar.config(mode="determinate")
+                            is_livestream = False
+                            
                         match = re.search(r'(\d+\.?\d*)%', line)
                         if match:
                             pct = float(match.group(1))
@@ -927,8 +970,15 @@ class YouTubeDownloader:
                         self.log(line)
 
                 self.current_process.wait()
-                if self.current_process.returncode == 0:
-                    self.log(f"✓ 下載完成: {title}", "green")
+                if is_livestream:
+                    self.progress_bar.stop()
+                    self.progress_bar.config(mode="determinate")
+
+                if self.current_process.returncode == 0 or self.stop_flag:
+                    if self.stop_flag:
+                        self.log(f"✓ 已手動停止，檔案已儲存", "green")
+                    else:
+                        self.log(f"✓ 下載完成: {title}", "green")
                     self.progress_var.set(100)
                     if final_filepath and self.split_enable_var.get() and not is_sub_only:
                         self.process_split(final_filepath)
@@ -996,6 +1046,7 @@ class YouTubeDownloader:
             ] + self._build_subtitle_args() + self._build_section_args()
 
             try:
+                # 若為 Windows，移除 CREATE_NEW_PROCESS_GROUP
                 self.current_process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace',
@@ -1003,6 +1054,7 @@ class YouTubeDownloader:
                     env=self._get_subprocess_env()
                 )
 
+                is_livestream = False
                 final_filepath = None
                 for line in self.current_process.stdout:
                     line = line.strip()
@@ -1019,7 +1071,37 @@ class YouTubeDownloader:
                     elif line.startswith("[download] ") and "has already been downloaded" in line:
                         final_filepath = line.split("[download] ")[1].split(" has already")[0].strip()
 
-                    if "[download]" in line and "%" in line:
+                    # 判斷 ffmpeg 直播日誌
+                    if "size=" in line and "time=" in line and "bitrate=" in line:
+                        if not is_livestream:
+                            is_livestream = True
+                            self.progress_bar.config(mode="indeterminate")
+                            self.progress_bar.start()
+                        
+                        match = re.search(r'size=\s*(.*?)\s+time=(.*?)\s', line)
+                        if match:
+                            size = match.group(1).strip()
+                            time_str = match.group(2).strip()
+                            self.set_status(f"直播錄製中 ({i}/{total}): 已下載 {size} | 時間: {time_str}", "orange")
+
+                    elif "[download]" in line and "at" in line and "%" not in line and "MiB" in line:
+                        if not is_livestream:
+                            is_livestream = True
+                            self.progress_bar.config(mode="indeterminate")
+                            self.progress_bar.start()
+                        
+                        match = re.search(r'\[download\]\s+(.*?)\s+at\s+(.*?)\s+\((.*?)\)', line)
+                        if match:
+                            size = match.group(1)
+                            time_str = match.group(3)
+                            self.set_status(f"直播錄製中 ({i}/{total}): 已下載 {size} | 時間: {time_str}", "orange")
+
+                    elif "[download]" in line and "%" in line:
+                        if is_livestream:
+                            self.progress_bar.stop()
+                            self.progress_bar.config(mode="determinate")
+                            is_livestream = False
+                            
                         match = re.search(r'(\d+\.?\d*)%', line)
                         if match:
                             pct = float(match.group(1))
@@ -1029,7 +1111,11 @@ class YouTubeDownloader:
                         self.log(line)
 
                 self.current_process.wait()
-                if self.current_process.returncode == 0:
+                if is_livestream:
+                    self.progress_bar.stop()
+                    self.progress_bar.config(mode="determinate")
+                    
+                if self.current_process.returncode == 0 or self.stop_flag:
                     self.log(f"✓ 完成: {title}", "green")
                     if final_filepath and self.split_enable_var.get():
                         self.process_split(final_filepath)

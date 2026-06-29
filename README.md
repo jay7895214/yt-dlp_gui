@@ -1,6 +1,6 @@
 [繁體中文](README_zh-TW.md) | [English](README.md)
 
-# yt-dlp_gui v1.3.0
+# yt-dlp_gui v1.3.1
 
 A universal downloader GUI for YouTube and Podcasts, built with Python and Tkinter.
 It acts as a wrapper around `yt-dlp` and `ffmpeg`.
