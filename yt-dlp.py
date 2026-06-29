@@ -24,13 +24,21 @@ DEFAULT_CONFIG = {
     "embed_subs": False,
     "sub_langs": "zh-TW,en",
     "sub_format": "srt",
+    "split_enable": False,
+    "split_mode": "time",
+    "split_time": "00:30:00",
+    "split_parts": "3",
+    "split_delete_original": True,
+    "crop_enable": False,
+    "crop_start": "00:00:00",
+    "crop_end": "00:00:60",
 }
 
 
 class YouTubeDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Universal Downloader (YouTube/Podcast) v1.2.0")
+        self.root.title("Universal Downloader (YouTube/Podcast) v1.3.0")
         self.root.geometry("780x850")
         self.root.minsize(700, 600)
 
@@ -80,6 +88,14 @@ class YouTubeDownloader:
             "embed_subs": self.embed_subs_var.get(),
             "sub_langs": self.sub_lang_entry.get().strip(),
             "sub_format": self.sub_format_var.get(),
+            "split_enable": self.split_enable_var.get(),
+            "split_mode": self.split_mode_var.get(),
+            "split_time": self.split_time_entry.get(),
+            "split_parts": self.split_parts_entry.get(),
+            "split_delete_original": self.split_delete_original_var.get(),
+            "crop_enable": self.crop_enable_var.get(),
+            "crop_start": self.crop_start_entry.get(),
+            "crop_end": self.crop_end_entry.get(),
         }
         try:
             with open(self._get_config_path(), 'w', encoding='utf-8') as f:
@@ -142,12 +158,44 @@ class YouTubeDownloader:
         # 時間裁切
         time_frame = tk.Frame(options_frame)
         time_frame.pack(fill=tk.X, pady=3)
-        tk.Label(time_frame, text="時間裁切 (秒):").pack(side=tk.LEFT)
-        self.start_sec_entry = tk.Entry(time_frame, width=8)
-        self.start_sec_entry.pack(side=tk.LEFT, padx=5)
+        
+        self.crop_enable_var = tk.BooleanVar(value=cfg.get("crop_enable", False))
+        tk.Checkbutton(time_frame, text="時間裁切", variable=self.crop_enable_var, command=self._toggle_crop_state).pack(side=tk.LEFT)
+        
+        self.crop_start_entry = tk.Entry(time_frame, width=10)
+        self.crop_start_entry.pack(side=tk.LEFT, padx=5)
+        self.crop_start_entry.insert(0, cfg.get("crop_start", "00:00:00"))
+        
         tk.Label(time_frame, text="-").pack(side=tk.LEFT)
-        self.end_sec_entry = tk.Entry(time_frame, width=8)
-        self.end_sec_entry.pack(side=tk.LEFT, padx=5)
+        
+        self.crop_end_entry = tk.Entry(time_frame, width=10)
+        self.crop_end_entry.pack(side=tk.LEFT, padx=5)
+        self.crop_end_entry.insert(0, cfg.get("crop_end", "00:00:60"))
+
+        # 影片分割
+        split_frame = tk.Frame(options_frame)
+        split_frame.pack(fill=tk.X, pady=3)
+        self.split_enable_var = tk.BooleanVar(value=cfg.get("split_enable", False))
+        tk.Checkbutton(split_frame, text="影片分割", variable=self.split_enable_var, command=self._toggle_split_state).pack(side=tk.LEFT)
+        
+        self.split_mode_var = tk.StringVar(value=cfg.get("split_mode", "time"))
+        
+        self.split_time_rb = tk.Radiobutton(split_frame, text="依時間", variable=self.split_mode_var, value="time")
+        self.split_time_rb.pack(side=tk.LEFT, padx=(5, 0))
+        self.split_time_entry = tk.Entry(split_frame, width=10)
+        self.split_time_entry.pack(side=tk.LEFT, padx=2)
+        self.split_time_entry.insert(0, cfg.get("split_time", "00:30:00"))
+        
+        self.split_parts_rb = tk.Radiobutton(split_frame, text="依數量", variable=self.split_mode_var, value="parts")
+        self.split_parts_rb.pack(side=tk.LEFT, padx=(10, 0))
+        self.split_parts_entry = tk.Entry(split_frame, width=5)
+        self.split_parts_entry.pack(side=tk.LEFT, padx=2)
+        self.split_parts_entry.insert(0, cfg.get("split_parts", "3"))
+        tk.Label(split_frame, text="份").pack(side=tk.LEFT)
+        
+        self.split_delete_original_var = tk.BooleanVar(value=cfg.get("split_delete_original", True))
+        self.split_delete_cb = tk.Checkbutton(split_frame, text="刪除原檔", variable=self.split_delete_original_var)
+        self.split_delete_cb.pack(side=tk.LEFT, padx=(10, 0))
 
         # 儲存位置
         path_frame = tk.Frame(options_frame)
@@ -220,11 +268,14 @@ class YouTubeDownloader:
         for color in ("red", "green", "blue", "orange", "purple", "black"):
             self.log_text.tag_configure(color, foreground=color)
 
-        # --- 版本資訊 ---
         ver_frame = tk.Frame(self.root)
         ver_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
         self.ver_label = tk.Label(ver_frame, text="偵測版本中...", font=("Arial", 8), fg="gray")
         self.ver_label.pack(side=tk.RIGHT)
+
+        # 初始化分割與裁切選項狀態
+        self._toggle_split_state()
+        self._toggle_crop_state()
 
     # ======================== 工具方法 ========================
     def log(self, msg, color="black"):
@@ -237,6 +288,19 @@ class YouTubeDownloader:
 
     def set_status(self, msg, color="blue"):
         self.status_label.config(text=msg, fg=color)
+
+    def _toggle_crop_state(self):
+        state = tk.NORMAL if self.crop_enable_var.get() else tk.DISABLED
+        self.crop_start_entry.config(state=state)
+        self.crop_end_entry.config(state=state)
+
+    def _toggle_split_state(self):
+        state = tk.NORMAL if self.split_enable_var.get() else tk.DISABLED
+        self.split_time_rb.config(state=state)
+        self.split_time_entry.config(state=state)
+        self.split_parts_rb.config(state=state)
+        self.split_parts_entry.config(state=state)
+        self.split_delete_cb.config(state=state)
 
     def browse_folder(self):
         d = filedialog.askdirectory()
@@ -333,13 +397,15 @@ class YouTubeDownloader:
 
     def _build_section_args(self):
         """建立時間裁切參數"""
-        start_sec = self.start_sec_entry.get().strip()
-        end_sec = self.end_sec_entry.get().strip()
-        if start_sec or end_sec:
-            s = start_sec if start_sec else "0"
-            e = end_sec if end_sec else "inf"
-            return ["--download-sections", f"*{s}-{e}", "--force-keyframes-at-cuts"]
-        return []
+        if not hasattr(self, 'crop_enable_var') or not self.crop_enable_var.get():
+            return []
+            
+        start_time = self.crop_start_entry.get().strip()
+        end_time = self.crop_end_entry.get().strip()
+        
+        s = start_time if start_time else "0"
+        e = end_time if end_time else "inf"
+        return ["--download-sections", f"*{s}-{e}", "--force-keyframes-at-cuts"]
 
     def stop_task(self):
         """停止目前正在執行的任務"""
@@ -835,10 +901,22 @@ class YouTubeDownloader:
                     env=self._get_subprocess_env()
                 )
 
+                final_filepath = None
                 for line in self.current_process.stdout:
                     line = line.strip()
                     if not line:
                         continue
+                        
+                    # 擷取最終檔案路徑
+                    if line.startswith("[download] Destination: "):
+                        final_filepath = line.replace("[download] Destination: ", "").strip()
+                    elif line.startswith("[Merger] Merging formats into "):
+                        final_filepath = line.replace("[Merger] Merging formats into ", "").strip().strip('"')
+                    elif line.startswith("[VideoRemuxer] Remuxing video from "):
+                        final_filepath = line.split(' to ')[-1].strip().strip('"')
+                    elif line.startswith("[download] ") and "has already been downloaded" in line:
+                        final_filepath = line.split("[download] ")[1].split(" has already")[0].strip()
+
                     if "[download]" in line and "%" in line:
                         match = re.search(r'(\d+\.?\d*)%', line)
                         if match:
@@ -852,6 +930,8 @@ class YouTubeDownloader:
                 if self.current_process.returncode == 0:
                     self.log(f"✓ 下載完成: {title}", "green")
                     self.progress_var.set(100)
+                    if final_filepath and self.split_enable_var.get() and not is_sub_only:
+                        self.process_split(final_filepath)
                 else:
                     self.log(f"✗ 下載失敗: {title}", "red")
 
@@ -923,10 +1003,22 @@ class YouTubeDownloader:
                     env=self._get_subprocess_env()
                 )
 
+                final_filepath = None
                 for line in self.current_process.stdout:
                     line = line.strip()
                     if not line:
                         continue
+                        
+                    # 擷取最終檔案路徑
+                    if line.startswith("[download] Destination: "):
+                        final_filepath = line.replace("[download] Destination: ", "").strip()
+                    elif line.startswith("[Merger] Merging formats into "):
+                        final_filepath = line.replace("[Merger] Merging formats into ", "").strip().strip('"')
+                    elif line.startswith("[VideoRemuxer] Remuxing video from "):
+                        final_filepath = line.split(' to ')[-1].strip().strip('"')
+                    elif line.startswith("[download] ") and "has already been downloaded" in line:
+                        final_filepath = line.split("[download] ")[1].split(" has already")[0].strip()
+
                     if "[download]" in line and "%" in line:
                         match = re.search(r'(\d+\.?\d*)%', line)
                         if match:
@@ -939,6 +1031,8 @@ class YouTubeDownloader:
                 self.current_process.wait()
                 if self.current_process.returncode == 0:
                     self.log(f"✓ 完成: {title}", "green")
+                    if final_filepath and self.split_enable_var.get():
+                        self.process_split(final_filepath)
                 else:
                     self.log(f"✗ 失敗: {title}", "red")
 
@@ -952,6 +1046,93 @@ class YouTubeDownloader:
         self.root.after(0, lambda: self.download_btn.config(text="⬇️ 直接下載"))
         self.root.after(0, lambda: self.set_status("任務結束", "blue"))
         self.root.after(0, lambda: messagebox.showinfo("完成", "所有排程任務已結束"))
+
+    def process_split(self, filepath):
+        """處理影片分割邏輯"""
+        if not os.path.exists(filepath):
+            self.log(f"無法進行分割: 找不到檔案 {filepath}", "red")
+            return
+            
+        mode = self.split_mode_var.get()
+        segment_time = 0
+        
+        if mode == "time":
+            time_str = self.split_time_entry.get().strip()
+            # parse hh:mm:ss
+            try:
+                parts = time_str.split(':')
+                if len(parts) == 3:
+                    segment_time = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                else:
+                    raise ValueError("Invalid format")
+            except:
+                self.log(f"分割時間格式錯誤，請使用 hh:mm:ss", "red")
+                return
+        elif mode == "parts":
+            parts_str = self.split_parts_entry.get().strip()
+            try:
+                parts_count = int(parts_str)
+                if parts_count <= 1:
+                    self.log(f"分割數量必須大於 1", "red")
+                    return
+                # 使用 ffprobe 取得影片時長
+                fp_path = os.path.join(self.bin_folder, "ffprobe.exe")
+                if not os.path.exists(fp_path):
+                    fp_path = "ffprobe"
+                
+                cmd = [fp_path, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
+                proc = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+                duration = float(proc.stdout.strip())
+                segment_time = int(duration / parts_count) + 1
+            except Exception as e:
+                self.log(f"計算分割時間失敗: {e}", "red")
+                return
+                
+        if segment_time <= 0:
+            self.log(f"無效的分割時間", "red")
+            return
+            
+        self.log(f"開始分割檔案... (每個片段約 {segment_time} 秒)")
+        self.set_status("正在分割影片...", "orange")
+        
+        ff_path = os.path.join(self.bin_folder, "ffmpeg.exe")
+        if not os.path.exists(ff_path):
+            ff_path = "ffmpeg"
+            
+        # 建立輸出檔名
+        base, ext = os.path.splitext(filepath)
+        out_pattern = f"{base}_part%03d{ext}"
+        
+        split_cmd = [
+            ff_path, "-y", "-i", filepath,
+            "-f", "segment", "-segment_time", str(segment_time),
+            "-c", "copy", out_pattern
+        ]
+        
+        try:
+            self.current_process = subprocess.Popen(
+                split_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding='utf-8', errors='replace',
+                startupinfo=self._get_startupinfo()
+            )
+            for line in self.current_process.stdout:
+                pass # 消費 stdout 以免卡住
+            self.current_process.wait()
+            
+            if self.current_process.returncode == 0:
+                self.log(f"✓ 分割完成！", "green")
+                if self.split_delete_original_var.get():
+                    try:
+                        os.remove(filepath)
+                        self.log(f"已自動刪除原檔", "gray")
+                    except Exception as e:
+                        self.log(f"無法刪除原檔: {e}", "orange")
+            else:
+                self.log(f"✗ 分割失敗", "red")
+        except Exception as e:
+            self.log(f"執行分割錯誤: {e}", "red")
+        finally:
+            self.current_process = None
 
     # ======================== 工具更新 ========================
     def start_update_tools(self):

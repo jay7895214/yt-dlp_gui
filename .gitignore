@@ -1,8 +1,28 @@
-ffprobe.exe
-ffplay.exe
-ffmpeg.exe
-yt-dlp.exe
-bin/
-config.json
+# Python
 __pycache__/
-ffmpeg-master-latest-win64-gpl/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+.env
+
+# Project specific binaries and downloaded tools
+bin/
+ffmpeg-master-*/
+*.exe
+*.zip
+
+# Local configuration and logs
+config.json
+*.log
+*.session
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# AI Agent workspace
+.agents/
