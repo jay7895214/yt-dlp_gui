@@ -1,12 +1,14 @@
 [繁體中文](README_zh-TW.md) | [English](README.md)
 
-# yt-dlp_gui v1.3.1
+# yt-dlp_gui v1.4.0
 
 A universal downloader GUI for YouTube and Podcasts, built with Python and Tkinter.
 It acts as a wrapper around `yt-dlp` and `ffmpeg`.
 
 ## Features
-- Batch download support
+- **Concurrent Download Queue**: Manage multiple downloads with an adjustable concurrency limit
+- **Task Panel**: Individual progress, speed, and cancel/retry controls for each download task
+- Batch download support (multiple URLs or playlists)
 - Playlist and single video analysis
 - Selection of video formats, resolutions, and container preferences (MP4/WebM)
 - Video time cropping and advanced splitting options (by time or quantity)
