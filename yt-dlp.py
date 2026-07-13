@@ -11,6 +11,7 @@ import json
 import datetime
 import re
 import uuid
+import time
 from pathlib import Path
 from io import BytesIO
 
@@ -34,13 +35,16 @@ DEFAULT_CONFIG = {
     "crop_start": "00:00:00",
     "crop_end": "00:00:60",
     "max_concurrent": 2,
+    "auto_retry_enable": False,
+    "auto_retry_interval": 30,
+    "auto_retry_max": 3,
 }
 
 
 class YouTubeDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Universal Downloader (YouTube/Podcast) v1.4.0")
+        self.root.title("Universal Downloader (YouTube/Podcast) v1.5.0")
         self.root.geometry("1150x850")
         self.root.minsize(950, 600)
 
@@ -102,6 +106,9 @@ class YouTubeDownloader:
             "crop_start": self.crop_start_entry.get(),
             "crop_end": self.crop_end_entry.get(),
             "max_concurrent": self.config['max_concurrent'],
+            "auto_retry_enable": self.auto_retry_enable_var.get(),
+            "auto_retry_interval": int(self.auto_retry_interval_entry.get()),
+            "auto_retry_max": int(self.auto_retry_max_entry.get()),
         }
         try:
             with open(self._get_config_path(), 'w', encoding='utf-8') as f:
@@ -196,6 +203,21 @@ class YouTubeDownloader:
         self.split_delete_cb = tk.Checkbutton(split_frame, text="刪除原檔", variable=self.split_delete_original_var)
         self.split_delete_cb.pack(side=tk.LEFT, padx=(10, 0))
 
+        retry_frame = tk.Frame(options_frame)
+        retry_frame.pack(fill=tk.X, pady=3)
+        self.auto_retry_enable_var = tk.BooleanVar(value=cfg.get("auto_retry_enable", False))
+        tk.Checkbutton(retry_frame, text="自動重試 (403/網路錯誤)", variable=self.auto_retry_enable_var, command=self._toggle_retry_state).pack(side=tk.LEFT)
+        tk.Label(retry_frame, text="間隔:").pack(side=tk.LEFT, padx=(10, 2))
+        self.auto_retry_interval_entry = tk.Entry(retry_frame, width=4)
+        self.auto_retry_interval_entry.pack(side=tk.LEFT)
+        self.auto_retry_interval_entry.insert(0, str(cfg.get("auto_retry_interval", 30)))
+        tk.Label(retry_frame, text="秒").pack(side=tk.LEFT, padx=(2, 5))
+        tk.Label(retry_frame, text="最多:").pack(side=tk.LEFT, padx=(5, 2))
+        self.auto_retry_max_entry = tk.Entry(retry_frame, width=3)
+        self.auto_retry_max_entry.pack(side=tk.LEFT)
+        self.auto_retry_max_entry.insert(0, str(cfg.get("auto_retry_max", 3)))
+        tk.Label(retry_frame, text="次").pack(side=tk.LEFT, padx=(2, 0))
+
         path_frame = tk.Frame(options_frame)
         path_frame.pack(fill=tk.X, pady=3)
         tk.Label(path_frame, text="儲存位置:").pack(side=tk.LEFT)
@@ -284,6 +306,7 @@ class YouTubeDownloader:
 
         self._toggle_split_state()
         self._toggle_crop_state()
+        self._toggle_retry_state()
 
     def log(self, msg, color="black"):
         self.log_text.config(state='normal')
@@ -304,6 +327,11 @@ class YouTubeDownloader:
         self.split_parts_rb.config(state=state)
         self.split_parts_entry.config(state=state)
         self.split_delete_cb.config(state=state)
+
+    def _toggle_retry_state(self):
+        state = tk.NORMAL if self.auto_retry_enable_var.get() else tk.DISABLED
+        self.auto_retry_interval_entry.config(state=state)
+        self.auto_retry_max_entry.config(state=state)
 
     def browse_folder(self):
         d = filedialog.askdirectory()
@@ -740,7 +768,8 @@ class YouTubeDownloader:
         frame = tk.Frame(self.task_inner_frame, bd=1, relief="solid", padx=5, pady=5, bg="#f9f9f9")
         frame.pack(fill=tk.X, pady=2, padx=2)
 
-        title_lbl = tk.Label(frame, text=task_info["title"], font=("Arial", 9, "bold"), bg="#f9f9f9", anchor="w")
+        display_title = task_info["title"][:45] + ("..." if len(task_info["title"]) > 45 else "")
+        title_lbl = tk.Label(frame, text=display_title, font=("Arial", 9, "bold"), bg="#f9f9f9", anchor="w")
         title_lbl.pack(fill=tk.X)
 
         prog_var = tk.DoubleVar()
@@ -749,13 +778,19 @@ class YouTubeDownloader:
 
         status_frame = tk.Frame(frame, bg="#f9f9f9")
         status_frame.pack(fill=tk.X)
-        status_lbl = tk.Label(status_frame, text=task_info["status"], font=("Arial", 8), bg="#f9f9f9", fg="#555")
-        status_lbl.pack(side=tk.LEFT)
 
-        stop_btn = tk.Button(status_frame, text="⏹", fg="red", font=("Arial", 8), relief="flat", command=lambda: self.cancel_task(task_info["id"]))
-        stop_btn.pack(side=tk.RIGHT)
+        # Use grid layout to prevent buttons from being pushed off-screen
+        status_frame.columnconfigure(0, weight=1)
+        status_frame.columnconfigure(1, weight=0)
+        status_frame.columnconfigure(2, weight=0)
+
+        status_lbl = tk.Label(status_frame, text=task_info["status"], font=("Arial", 8), bg="#f9f9f9", fg="#555", anchor="w")
+        status_lbl.grid(row=0, column=0, sticky="ew")
+
         retry_btn = tk.Button(status_frame, text="🔄", fg="blue", font=("Arial", 8), relief="flat", command=lambda: self.retry_task(task_info["id"]), state=tk.DISABLED)
-        retry_btn.pack(side=tk.RIGHT, padx=2)
+        retry_btn.grid(row=0, column=1, padx=2)
+        stop_btn = tk.Button(status_frame, text="⏹", fg="red", font=("Arial", 8), relief="flat", command=lambda: self.cancel_task(task_info["id"]))
+        stop_btn.grid(row=0, column=2)
 
         self.task_widgets[task_info["id"]] = {
             "frame": frame,
@@ -772,7 +807,7 @@ class YouTubeDownloader:
         w = self.task_widgets[task_id]
         if title: w["title_lbl"].config(text=title[:45] + ("..." if len(title)>45 else ""))
         if progress is not None: w["prog_var"].set(progress)
-        if status: w["status_lbl"].config(text=status)
+        if status: w["status_lbl"].config(text=status[:60] + ("..." if len(status) > 60 else ""))
         if indeterminate is True:
             w["prog_bar"].config(mode="indeterminate")
             w["prog_bar"].start()
@@ -848,6 +883,7 @@ class YouTubeDownloader:
         cmd = [
             exe, "--ffmpeg-location", self.bin_folder, "--ignore-config", "--no-part", "--embed-metadata",
             "-P", save_path, "-o", "%(upload_date)s_%(title)s.%(ext)s",
+            "--print", "after_move:filepath",
         ]
 
         is_sub_only = task.get("subtitle_args") and "--skip-download" in task["subtitle_args"]
@@ -861,116 +897,249 @@ class YouTubeDownloader:
         
         cmd.append(task["url"])
 
+        # Capture split options on the main thread context (they're already read here on the worker thread,
+        # but we capture them as local vars to avoid further Tkinter access in process_split)
+        split_enabled = self.split_enable_var.get() if not is_sub_only else False
+        split_mode = self.split_mode_var.get()
+        split_time_str = self.split_time_entry.get().strip()
+        split_parts_str = self.split_parts_entry.get().strip()
+        split_delete_original = self.split_delete_original_var.get()
+
+        # Capture auto-retry options
+        auto_retry_enabled = self.auto_retry_enable_var.get()
+        try:
+            auto_retry_interval = int(self.auto_retry_interval_entry.get())
+        except:
+            auto_retry_interval = 30
+        try:
+            auto_retry_max = int(self.auto_retry_max_entry.get())
+        except:
+            auto_retry_max = 3
+
         is_livestream = False
         final_filepath = None
+        retry_count = 0
 
-        try:
-            task["process"] = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding='utf-8', errors='replace',
-                startupinfo=self._get_startupinfo(),
-                env=self._get_subprocess_env()
-            )
+        while True:  # Auto-retry loop
+            try:
+                task["process"] = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding='utf-8', errors='replace',
+                    startupinfo=self._get_startupinfo(),
+                    env=self._get_subprocess_env()
+                )
 
-            last_lines = []
-            for line in task["process"].stdout:
-                line = line.strip()
-                if not line: continue
-                last_lines.append(line)
-                if len(last_lines) > 5: last_lines.pop(0)
-                
-                if line.startswith("[download] Destination: "):
-                    final_filepath = line.replace("[download] Destination: ", "").strip()
-                elif line.startswith("[Merger] Merging formats into "):
-                    final_filepath = line.replace("[Merger] Merging formats into ", "").strip().strip('"')
-                elif line.startswith("[VideoRemuxer] Remuxing video from "):
-                    final_filepath = line.split(' to ')[-1].strip().strip('"')
-                elif line.startswith("[download] ") and "has already been downloaded" in line:
-                    final_filepath = line.split("[download] ")[1].split(" has already")[0].strip()
+                last_lines = []
+                printed_filepath = None  # Captured from --print after_move:filepath
+                for line in task["process"].stdout:
+                    line = line.strip()
+                    if not line: continue
+                    last_lines.append(line)
+                    if len(last_lines) > 5: last_lines.pop(0)
+                    
+                    if line.startswith("[download] Destination: "):
+                        final_filepath = line.replace("[download] Destination: ", "").strip()
+                    elif line.startswith("[Merger] Merging formats into "):
+                        final_filepath = line.replace("[Merger] Merging formats into ", "").strip().strip('"')
+                    elif line.startswith("[VideoRemuxer] Remuxing video from "):
+                        final_filepath = line.split(' to ')[-1].strip().strip('"')
+                    elif line.startswith("[ExtractAudio] Destination: "):
+                        final_filepath = line.replace("[ExtractAudio] Destination: ", "").strip()
+                    elif line.startswith("[download] ") and "has already been downloaded" in line:
+                        final_filepath = line.split("[download] ")[1].split(" has already")[0].strip()
+                    # Capture --print after_move:filepath output (lines without [] prefix are print output)
+                    elif not line.startswith("[") and not line.startswith("ERROR") and os.path.sep in line:
+                        candidate = line.strip()
+                        if os.path.splitext(candidate)[1]:  # Has file extension
+                            printed_filepath = candidate
 
-                if "size=" in line and "time=" in line and "bitrate=" in line:
-                    if not is_livestream:
-                        is_livestream = True
-                        self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=True))
-                    match = re.search(r'size=\s*(.*?)\s+time=(.*?)\s+bitrate=.*?speed=\s*(.*?)x', line)
-                    if match:
-                        size, time_str, speed = match.group(1).strip(), match.group(2).strip(), match.group(3).strip()
-                        self.root.after(0, lambda t=task["id"], s=f"已下載 {size} | {speed}x | {time_str}": self.update_task_ui(t, status=s))
-                elif "[download]" in line and "at" in line and "%" not in line and "MiB" in line:
-                    if not is_livestream:
-                        is_livestream = True
-                        self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=True))
-                    match = re.search(r'\[download\]\s+(.*?)\s+at\s+(.*?)\s+\((.*?)\)', line)
-                    if match:
-                        size, speed, time_str = match.group(1), match.group(2), match.group(3)
-                        self.root.after(0, lambda t=task["id"], s=f"已下載 {size} | {speed} | {time_str}": self.update_task_ui(t, status=s))
-                elif "[download]" in line and "%" in line:
-                    if is_livestream:
-                        is_livestream = False
-                        self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=False))
-                    match = re.search(r'(\d+\.?\d*)%', line)
-                    if match:
-                        pct = float(match.group(1))
-                        self.root.after(0, lambda t=task["id"], p=pct: self.update_task_ui(t, progress=p, status=f"下載中: {p:.1f}%"))
+                    if "size=" in line and "time=" in line and "bitrate=" in line:
+                        if not is_livestream:
+                            is_livestream = True
+                            self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=True))
+                        match = re.search(r'size=\s*(.*?)\s+time=(.*?)\s+bitrate=.*?speed=\s*(.*?)x', line)
+                        if match:
+                            size, time_str, speed = match.group(1).strip(), match.group(2).strip(), match.group(3).strip()
+                            self.root.after(0, lambda t=task["id"], s=f"已下載 {size} | {speed}x | {time_str}": self.update_task_ui(t, status=s))
+                    elif "[download]" in line and "at" in line and "%" not in line and "MiB" in line:
+                        if not is_livestream:
+                            is_livestream = True
+                            self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=True))
+                        match = re.search(r'\[download\]\s+(.*?)\s+at\s+(.*?)\s+\((.*?)\)', line)
+                        if match:
+                            size, speed, time_str = match.group(1), match.group(2), match.group(3)
+                            self.root.after(0, lambda t=task["id"], s=f"已下載 {size} | {speed} | {time_str}": self.update_task_ui(t, status=s))
+                    elif "[download]" in line and "%" in line:
+                        if is_livestream:
+                            is_livestream = False
+                            self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=False))
+                        match = re.search(r'(\d+\.?\d*)%', line)
+                        if match:
+                            pct = float(match.group(1))
+                            self.root.after(0, lambda t=task["id"], p=pct: self.update_task_ui(t, progress=p, status=f"下載中: {p:.1f}%"))
 
-            task["process"].wait()
-            if is_livestream:
-                self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=False))
+                task["process"].wait()
+                if is_livestream:
+                    self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, indeterminate=False))
 
-            if task["process"].returncode == 0:
-                self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, progress=100, status="完成"))
-                if final_filepath and self.split_enable_var.get() and not is_sub_only:
-                    self.process_split(final_filepath)
-            else:
-                err_msg = last_lines[-1] if last_lines else "失敗或已停止"
-                task["last_error"] = err_msg
-                self.root.after(0, lambda t=task["id"], msg=err_msg: self.update_task_ui(t, status=f"失敗: {msg}"))
-                self.log(f"任務失敗 ({task['title']}): {err_msg}", "red")
+                # Prefer --print filepath over parsed log lines
+                if printed_filepath:
+                    final_filepath = printed_filepath
 
-        except Exception as e:
-            self.root.after(0, lambda t=task["id"], err=e: self.update_task_ui(t, status=f"錯誤: {err}"))
-            self.log(f"任務錯誤 ({task['title']}): {e}", "red")
-        finally:
-            self.root.after(0, lambda t=task["id"]: self.task_widgets[t]["stop_btn"].config(state=tk.DISABLED))
-            self.root.after(0, lambda t=task["id"]: self.task_widgets[t]["retry_btn"].config(state=tk.NORMAL if task.get("status") != "完成" else tk.DISABLED))
-            task["process"] = None
-            if task["id"] in self.active_tasks:
-                self.active_tasks.pop(task["id"])
-            self.root.after(0, self._check_queue)
+                if task["process"].returncode == 0:
+                    # If splitting is enabled, do it BEFORE reporting complete
+                    if final_filepath and split_enabled:
+                        self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, progress=100, status="分割中..."))
+                        self.log(f"開始分割影片: {os.path.basename(final_filepath)}")
+                        self.process_split(task["id"], final_filepath, split_mode, split_time_str, split_parts_str, split_delete_original)
+                    self.root.after(0, lambda t=task["id"]: self.update_task_ui(t, progress=100, status="完成"))
+                    self.log(f"✓ 任務完成: {task['title']}", "green")
+                    break  # Success — exit retry loop
+                else:
+                    err_msg = last_lines[-1] if last_lines else "失敗或已停止"
+                    task["last_error"] = err_msg
 
-    def process_split(self, filepath):
-        if not os.path.exists(filepath): return
-        mode = self.split_mode_var.get()
+                    # Check if we should auto-retry (403 / network errors)
+                    is_retryable = auto_retry_enabled and retry_count < auto_retry_max and (
+                        "403" in err_msg or "Forbidden" in err_msg or
+                        "HTTP Error" in err_msg or "URLError" in err_msg or
+                        "timed out" in err_msg.lower() or "connection" in err_msg.lower()
+                    )
+
+                    if is_retryable:
+                        retry_count += 1
+                        wait_sec = auto_retry_interval
+                        self.log(f"任務失敗 ({task['title']}): {err_msg}，{wait_sec} 秒後自動重試 ({retry_count}/{auto_retry_max})...", "orange")
+                        for remaining in range(wait_sec, 0, -1):
+                            self.root.after(0, lambda t=task["id"], r=remaining, rc=retry_count, mx=auto_retry_max:
+                                self.update_task_ui(t, status=f"重試 {rc}/{mx}，等待 {r} 秒..."))
+                            time.sleep(1)
+                            # Check if task was cancelled during wait
+                            if task["id"] not in self.active_tasks:
+                                break
+                        if task["id"] not in self.active_tasks:
+                            break  # Task was cancelled
+                        self.root.after(0, lambda t=task["id"], rc=retry_count, mx=auto_retry_max:
+                            self.update_task_ui(t, status=f"重試中 ({rc}/{mx})...", progress=0))
+                        continue  # Retry the download
+                    else:
+                        self.root.after(0, lambda t=task["id"], msg=err_msg: self.update_task_ui(t, status=f"失敗: {msg}"))
+                        self.log(f"任務失敗 ({task['title']}): {err_msg}", "red")
+                        break  # No retry — exit loop
+
+            except Exception as e:
+                self.root.after(0, lambda t=task["id"], err=e: self.update_task_ui(t, status=f"錯誤: {err}"))
+                self.log(f"任務錯誤 ({task['title']}): {e}", "red")
+                break  # Exit retry loop on exception
+
+        # Cleanup (runs after retry loop exits)
+        self.root.after(0, lambda t=task["id"]: self.task_widgets[t]["stop_btn"].config(state=tk.DISABLED))
+        self.root.after(0, lambda t=task["id"]: self.task_widgets[t]["retry_btn"].config(state=tk.NORMAL if task.get("last_error") else tk.DISABLED))
+        task["process"] = None
+        if task["id"] in self.active_tasks:
+            self.active_tasks.pop(task["id"])
+        self.root.after(0, self._check_queue)
+
+    def process_split(self, task_id, filepath, mode, split_time_str, split_parts_str, delete_original):
+        """Split a video file using FFmpeg. All parameters are passed in to avoid
+        thread-unsafe Tkinter variable access."""
+        if not os.path.exists(filepath):
+            self.log(f"分割失敗：找不到檔案 {filepath}", "red")
+            return
         segment_time = 0
+        total_duration = 0
         if mode == "time":
-            time_str = self.split_time_entry.get().strip()
             try:
-                parts = time_str.split(':')
+                parts = split_time_str.split(':')
                 segment_time = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            except: return
+            except Exception as e:
+                self.log(f"分割失敗：時間格式錯誤 '{split_time_str}'，請使用 HH:MM:SS 格式", "red")
+                return
         elif mode == "parts":
-            parts_str = self.split_parts_entry.get().strip()
             try:
-                parts_count = int(parts_str)
+                parts_count = int(split_parts_str)
+                if parts_count <= 0:
+                    self.log(f"分割失敗：分割數量必須大於 0", "red")
+                    return
                 fp_path = os.path.join(self.bin_folder, "ffprobe.exe")
                 if not os.path.exists(fp_path): fp_path = "ffprobe"
                 cmd = [fp_path, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
                 proc = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
-                segment_time = int(float(proc.stdout.strip()) / parts_count) + 1
-            except: return
-        if segment_time <= 0: return
+                total_duration = float(proc.stdout.strip())
+                segment_time = int(total_duration / parts_count) + 1
+                self.log(f"影片總長 {total_duration:.1f} 秒，分割為 {parts_count} 份（每份約 {segment_time} 秒）")
+            except Exception as e:
+                self.log(f"分割失敗：無法取得影片時長 ({e})", "red")
+                return
+        if segment_time <= 0:
+            self.log(f"分割失敗：無效的分割時間 ({segment_time})", "red")
+            return
         
         ff_path = os.path.join(self.bin_folder, "ffmpeg.exe")
         if not os.path.exists(ff_path): ff_path = "ffmpeg"
         base, ext = os.path.splitext(filepath)
-        split_cmd = [ff_path, "-y", "-i", filepath, "-f", "segment", "-segment_time", str(segment_time), "-c", "copy", f"{base}_part%03d{ext}"]
+        split_cmd = [
+            ff_path, "-y", "-i", filepath,
+            "-f", "segment", "-segment_time", str(segment_time),
+            "-reset_timestamps", "1",
+            "-c", "copy",
+            f"{base}_part%03d{ext}"
+        ]
         try:
-            proc = subprocess.Popen(split_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, startupinfo=self._get_startupinfo())
+            proc = subprocess.Popen(
+                split_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True, encoding='utf-8', errors='replace',
+                startupinfo=self._get_startupinfo()
+            )
+
+            # Read FFmpeg output line by line to avoid pipe deadlock and show progress
+            if total_duration <= 0:
+                # Try to get duration for progress calculation
+                try:
+                    fp_path2 = os.path.join(self.bin_folder, "ffprobe.exe")
+                    if not os.path.exists(fp_path2): fp_path2 = "ffprobe"
+                    dur_cmd = [fp_path2, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
+                    dur_proc = subprocess.run(dur_cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+                    total_duration = float(dur_proc.stdout.strip())
+                except:
+                    total_duration = 0
+
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                # Parse FFmpeg progress output (time= field)
+                time_match = re.search(r'time=(\d+):(\d+):(\d+\.?\d*)', line)
+                if time_match and total_duration > 0:
+                    h, m, s = int(time_match.group(1)), int(time_match.group(2)), float(time_match.group(3))
+                    current_time = h * 3600 + m * 60 + s
+                    pct = min(99.0, (current_time / total_duration) * 100)
+                    speed_match = re.search(r'speed=\s*(\S+)x', line)
+                    speed_str = speed_match.group(1) if speed_match else "--"
+                    self.root.after(0, lambda t=task_id, p=pct, sp=speed_str:
+                        self.update_task_ui(t, progress=p, status=f"分割中: {p:.1f}% | {sp}x"))
+                    self.log(f"  [FFmpeg 分割] {pct:.1f}% (speed: {speed_str}x)", "gray")
+                elif "Opening" in line and "for writing" in line:
+                    # FFmpeg logs each output segment file
+                    seg_name = line.split("'")[1] if "'" in line else line
+                    self.log(f"  [FFmpeg] 正在寫入: {os.path.basename(seg_name)}", "gray")
+
             proc.wait()
-            if proc.returncode == 0 and self.split_delete_original_var.get():
-                try: os.remove(filepath)
-                except: pass
-        except: pass
+
+            if proc.returncode == 0:
+                self.log(f"✓ 分割完成: {os.path.basename(filepath)}", "green")
+                if delete_original:
+                    try:
+                        os.remove(filepath)
+                        self.log(f"  已刪除原始檔案", "gray")
+                    except Exception as e:
+                        self.log(f"  無法刪除原始檔案: {e}", "orange")
+            else:
+                self.log(f"✗ 分割失敗 (FFmpeg 返回碼: {proc.returncode})", "red")
+        except Exception as e:
+            self.log(f"✗ 分割錯誤: {e}", "red")
 
     # ======================== 工具更新 ========================
     def start_update_tools(self):

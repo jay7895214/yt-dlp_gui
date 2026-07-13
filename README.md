@@ -1,6 +1,6 @@
 [繁體中文](README_zh-TW.md) | [English](README.md)
 
-# yt-dlp_gui v1.4.0
+# yt-dlp_gui v1.5.0
 
 A universal downloader GUI for YouTube and Podcasts, built with Python and Tkinter.
 It acts as a wrapper around `yt-dlp` and `ffmpeg`.
@@ -12,6 +12,7 @@ It acts as a wrapper around `yt-dlp` and `ffmpeg`.
 - Playlist and single video analysis
 - Selection of video formats, resolutions, and container preferences (MP4/WebM)
 - Video time cropping and advanced splitting options (by time or quantity)
+- Supports automatic retry on 403 Forbidden or network errors
 - Subtitle downloading (manual and auto-generated) with language and format options
 - Standalone subtitle downloading without video
 - Embedding subtitles and metadata
