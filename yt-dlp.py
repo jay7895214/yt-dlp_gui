@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
 class YouTubeDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Universal Downloader (YouTube/Podcast) v1.5.0")
+        self.root.title("Universal Downloader (YouTube/Podcast) v1.5.1")
         self.root.geometry("1150x850")
         self.root.minsize(950, 600)
 
@@ -1043,9 +1043,50 @@ class YouTubeDownloader:
     def process_split(self, task_id, filepath, mode, split_time_str, split_parts_str, delete_original):
         """Split a video file using FFmpeg. All parameters are passed in to avoid
         thread-unsafe Tkinter variable access."""
+        # --- 穩健的檔案定位機制 ---
+        # 步驟 1：等待檔案出現（最多等待 10 秒，每 0.5 秒檢查一次）
         if not os.path.exists(filepath):
-            self.log(f"分割失敗：找不到檔案 {filepath}", "red")
-            return
+            self.log(f"等待檔案寫入完成: {os.path.basename(filepath)}", "orange")
+            for _ in range(20):  # 20 次 × 0.5 秒 = 最多 10 秒
+                time.sleep(0.5)
+                if os.path.exists(filepath):
+                    break
+
+        # 步驟 2：如果檔案仍然不存在，嘗試在同目錄下用檔名模糊搜尋
+        if not os.path.exists(filepath):
+            import glob
+            directory = os.path.dirname(filepath)
+            basename_no_ext = os.path.splitext(os.path.basename(filepath))[0]
+            
+            escaped_dir = glob.escape(directory)
+            escaped_basename = glob.escape(basename_no_ext)
+            search_pattern = os.path.join(escaped_dir, f"{escaped_basename}.*")
+            
+            # 搜尋同名但不同副檔名的檔案（排除已分割的 _partXXX 檔案）
+            candidates = []
+            for f in glob.glob(search_pattern):
+                # 排除 _partXXX 結尾的檔案（那些是之前分割產生的）
+                fname_no_ext = os.path.splitext(os.path.basename(f))[0]
+                if re.search(r'_part\d+$', fname_no_ext):
+                    continue
+                candidates.append(f)
+            
+            if len(candidates) == 1:
+                filepath = candidates[0]
+                self.log(f"已找到替代檔案: {os.path.basename(filepath)}", "orange")
+            elif len(candidates) > 1:
+                # 多個候選：優先選擇影片檔案（按常見影片副檔名排序）
+                video_exts = ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.m4a', '.opus', '.mp3']
+                candidates.sort(key=lambda x: (
+                    video_exts.index(os.path.splitext(x)[1].lower())
+                    if os.path.splitext(x)[1].lower() in video_exts
+                    else 999
+                ))
+                filepath = candidates[0]
+                self.log(f"找到多個候選檔案，使用: {os.path.basename(filepath)}", "orange")
+            else:
+                self.log(f"分割失敗：找不到檔案 {filepath}", "red")
+                return
         segment_time = 0
         total_duration = 0
         if mode == "time":

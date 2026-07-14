@@ -1,6 +1,6 @@
 [繁體中文](README_zh-TW.md) | [English](README.md)
 
-# yt-dlp_gui v1.5.0
+# yt-dlp_gui v1.5.1
 
 基於 Python 和 Tkinter 開發的 YouTube 與 Podcast 萬用下載器圖形介面 (GUI)。
 本程式作為 `yt-dlp` 和 `ffmpeg` 的圖形化外殼，旨在提供更直觀的下載體驗。
